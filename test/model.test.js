@@ -191,4 +191,25 @@ test("countedValue picks liquid, options or total", () => {
   assert.equal(countedValue(accounts, "Liquid"), 36944 + 13039);
   assert.equal(countedValue(accounts, "Liquid + options"), 36944 + 13039 + 58303);
   assert.equal(countedValue(accounts, "Total"), 36944 + 13039 + 58303);
+
+test("credentials accepts the private key however it was pasted", async () => {
+  const { generateKeyPairSync, createPrivateKey } = await import("node:crypto");
+  const { credentials } = await import("../scripts/update-prices.mjs");
+  const pem = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" });
+  const escaped = pem.replace(/\n/g, "\\n");
+  const email = "bot@p.iam.gserviceaccount.com";
+  const forms = [
+    pem,
+    escaped,
+    `"${escaped}"`,
+    `"private_key": "${escaped}",`,
+    JSON.stringify({ type: "service_account", private_key: pem, client_email: email }),
+    pem.replace(/\n/g, " "),
+  ];
+  for (const f of forms) {
+    const c = credentials(`"${email}"`, f);
+    assert.equal(c.email, email);
+    assert.doesNotThrow(() => createPrivateKey(c.key));
+  }
+  assert.throws(() => credentials(email, "nope"), /BEGIN PRIVATE KEY/);
 });

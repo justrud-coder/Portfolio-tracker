@@ -36,7 +36,7 @@ The app's files are public on GitHub Pages, but they hold no data. Your numbers 
 In this repository, open **Settings → Pages** and set **Source** to **GitHub Actions**. The next push to `main` (or **Actions → Deploy app → Run workflow**) publishes the app at:
 
 ```
-https://justrud-coder.github.io/portfolio-tracker/
+https://justrud-coder.github.io/Portfolio-tracker/
 ```
 
 ### 2. Create a Google OAuth client ID
@@ -53,7 +53,7 @@ This lets the app ask Google for access to your sheets. It takes about five minu
 5. Go to **Clients → Create client**:
    - Application type: **Web application**, name: `Portfolio app`.
    - **Authorized JavaScript origins:** `https://justrud-coder.github.io`
-   - **Authorized redirect URIs:** `https://justrud-coder.github.io/portfolio-tracker/` (including the slash at the end).
+   - **Authorized redirect URIs:** `https://justrud-coder.github.io/Portfolio-tracker/` (including the slash at the end).
    - Click **Create** and copy the **Client ID** (it ends in `.apps.googleusercontent.com`). You won't need the client secret.
 6. Put the client ID in `app/config.js` as `clientId` and push. Or leave it empty: the app asks for it on first launch and keeps it on the phone.
 
@@ -61,7 +61,7 @@ Because the app is in Testing mode and asks for access to your spreadsheets, Goo
 
 ### 3. Install it on the phone
 
-Open `https://justrud-coder.github.io/portfolio-tracker/` on the phone and sign in.
+Open `https://justrud-coder.github.io/Portfolio-tracker/` on the phone and sign in.
 
 - **iPhone (Safari):** tap **Share → Add to Home Screen**.
 - **Android (Chrome):** tap **⋮ → Install app** (or **Add to Home screen**).
