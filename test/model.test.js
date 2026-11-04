@@ -281,10 +281,10 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   assert.equal(c.month.value, 250000 - 242162);
   // A snapshot taken today isn't a baseline.
   assert.equal(m.periodChanges(monthly, 1, "2026-10-05").month.from, "2026-09-05");
-  assert.equal(c.ytd.from, "2025-12-05");
-  assert.equal(c.ytd.value, 250000 - 195078);
-  // No snapshot last year: YTD starts at the year's first snapshot.
-  assert.equal(m.periodChanges(monthly.slice(1), 250000, "2026-11-04").ytd.from, "2026-01-08");
+  // Closest snapshot to 1 January: 8 Jan (7 days) beats 5 Dec (27 days).
+  assert.equal(c.ytd.from, "2026-01-08");
+  assert.equal(c.ytd.value, 250000 - 201190);
+  assert.equal(m.periodChanges(monthly.slice(0, 1), 250000, "2026-11-04").ytd.from, "2025-12-05");
   assert.equal(m.periodChanges([], 1, "2026-11-04").month.value, null);
 
   const groups = m.groupAccounts([

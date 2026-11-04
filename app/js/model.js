@@ -237,19 +237,6 @@ export function addMonths(iso, n) {
   return first.toISOString().slice(0, 10);
 }
 
-/**
- * Change of `total` since a baseline snapshot: the last one on or before
- * `fromDate`, or (when `fallbackFirstAfter`) the first one after it.
- */
-function changeFrom(monthly, total, fromDate, fallbackFirstAfter = false) {
-  let base = null;
-  for (const m of monthly) if (m.date <= fromDate) base = m;
-  if (!base && fallbackFirstAfter) base = monthly.find((m) => m.date > fromDate) ?? null;
-  if (!base) return { value: null, pct: null, from: null };
-  const value = total - base.total;
-  return { value, pct: base.total ? value / base.total : null, from: base.date };
-}
-
 const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
 
 /**
@@ -269,14 +256,13 @@ function changeNear(monthly, total, target, today) {
 
 /**
  * Change over the last month (against the snapshot closest to the same day
- * last month) and year to date (against the last snapshot of the previous
- * year, or the year's first snapshot when there is none).
+ * last month) and year to date (against the snapshot closest to 1 January).
  */
 export function periodChanges(monthly, total, today) {
   const year = today.slice(0, 4);
   return {
     month: changeNear(monthly, total, addMonths(today, -1), today),
-    ytd: changeFrom(monthly, total, `${Number(year) - 1}-12-31`, true),
+    ytd: changeNear(monthly, total, `${year}-01-01`, today),
   };
 }
 
