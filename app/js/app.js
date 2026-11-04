@@ -674,6 +674,10 @@ function renderAdd(root) {
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
   const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
   const recent = d.transactions.slice(-10).reverse();
+  const typeLabel = (t) => {
+    const x = String(t ?? "").replace(/_/g, " ").toLowerCase();
+    return x.charAt(0).toUpperCase() + x.slice(1);
+  };
 
   root.innerHTML = `
     <section class="card">
@@ -733,7 +737,7 @@ function renderAdd(root) {
             .map((t) => {
               const c = t.cells;
               const v = transactionValue(c);
-              return `<li><div class="row"><div><div class="name">${esc(c[2])} ${esc(c[3] || "")}</div><div class="meta">${esc(c[1])} · ${
+              return `<li><div class="row"><div><div class="name">${esc(c[3] || c[1])}</div><div class="meta">${esc(typeLabel(c[2]))}${c[3] ? ` · ${esc(c[1])}` : ""} · ${
                 serialToIso(c[0]) ? shortDate(serialToIso(c[0])) : "no date"
               }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="rep-btn" data-row="${t.row}" aria-label="Repeat this transaction" title="Repeat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.66 5.66L4 15.5M4 20v-4.5h4.5" /></svg></button><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
             })
