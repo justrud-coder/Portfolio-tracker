@@ -997,3 +997,82 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
 
   return { base, deposit, classes, outside, stocks, stockMoney, hasStockTargets, reachAll };
 }
+
+// ---------- savings rate ----------
+
+/** Income tab: Date | Source | Amount (EUR) | Note. */
+export const INCOME_HEADER = ["Date", "Source", "Amount (EUR)", "Note"];
+export const INCOME_SOURCES = ["Salary", "Bonus", "Rent", "Other"];
+
+/** Income tab rows with a date and an amount, with their 1-based sheet row. */
+export function parseIncome(grid) {
+  const c = columns(grid?.[0], { date: "Date", source: "Source", amount: "Amount", note: "Note" });
+  const out = [];
+  for (let r = 1; r < (grid?.length ?? 0); r++) {
+    const row = grid[r];
+    const date = serialToIso(cell(row, c.date));
+    const amount = num(cell(row, c.amount));
+    if (!date || amount === null) continue;
+    out.push({ row: r + 1, date, source: text(row, c.source), amount, note: text(row, c.note) });
+  }
+  return out;
+}
+
+/** Validate an income form and return the Income row (A:D). */
+export function incomeRow(t) {
+  const errors = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
+  const amount = num(String(t.amount ?? "").replace(",", "."));
+  if (!(amount > 0)) errors.push("Amount must be more than 0.");
+  const source = String(t.source ?? "").trim() || "Salary";
+  if (errors.length) return { errors };
+  return { errors, row: [t.date, source, amount, String(t.note ?? "").trim()] };
+}
+
+/**
+ * New money a Transactions row puts into the portfolio, or null when it moves
+ * nothing in from outside. Deposits add and withdrawals take away (a transfer
+ * between two of your own accounts nets to zero); III pillar buys add what was
+ * paid. IBKR buys and sells are left out because they are paid from and into
+ * IBKR cash, whose deposits already count. Option grants cost nothing, and
+ * starting positions aren't savings.
+ */
+export function savedBy(cells) {
+  const [date, account, type, , units, price, fees, cash, note] = cells ?? [];
+  if (!serialToIso(date) || /^starting position/i.test(String(note ?? "").trim())) return null;
+  if (type === "DEPOSIT") return num(cash) ?? 0;
+  if (type === "WITHDRAWAL") return -(num(cash) ?? 0);
+  if (account === PENSION && (type === "BUY" || type === "SELL")) {
+    const v = (num(units) ?? 0) * (num(price) ?? 0) + (num(fees) ?? 0);
+    return type === "BUY" ? v : -v;
+  }
+  return null;
+}
+
+/**
+ * Savings rate per calendar month, oldest first, for the `count` months up to
+ * and including `today`'s month: income, money saved, and saved / income
+ * (null without income). `average` is the rate over the months with income.
+ */
+export function savingsByMonth(transactions, income, today, count = 12) {
+  const end = today.slice(0, 7);
+  const months = [];
+  for (let i = count - 1; i >= 0; i--) months.push(addMonths(`${end}-01`, -i).slice(0, 7));
+  const by = new Map(months.map((m) => [m, { month: m, income: 0, saved: 0, rate: null }]));
+  for (const i of income) by.get(i.date.slice(0, 7)) && (by.get(i.date.slice(0, 7)).income += i.amount);
+  for (const t of transactions) {
+    const cells = t.cells ?? t;
+    const v = savedBy(cells);
+    const m = by.get(serialToIso(cells[0]).slice(0, 7));
+    if (v !== null && m) m.saved += v;
+  }
+  const list = [...by.values()];
+  for (const m of list) {
+    m.saved = Math.round(m.saved * 100) / 100;
+    m.rate = m.income > 0 ? m.saved / m.income : null;
+  }
+  const withIncome = list.filter((m) => m.income > 0);
+  const inc = withIncome.reduce((s, m) => s + m.income, 0);
+  const saved = withIncome.reduce((s, m) => s + m.saved, 0);
+  return { months: list, income: inc, saved, average: inc ? saved / inc : null, monthsWithIncome: withIncome.length };
+}

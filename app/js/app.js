@@ -39,6 +39,11 @@ import {
   parseTargets,
   rebalancePlan,
   targetsGrid,
+  INCOME_HEADER,
+  INCOME_SOURCES,
+  incomeRow,
+  parseIncome,
+  savingsByMonth,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { lineChart } from "./chart.js";
@@ -56,6 +61,8 @@ const RETIREMENT_RANGE = "Retirement!A1:C40";
 // The target mix for the Rebalance tab; the tab is created on first save.
 const TARGETS_RANGE = "Targets!A1:C40";
 const DEPOSIT_KEY = "pt.deposit";
+// Also on its own: the Income tab is made the first time income is saved.
+const INCOME_RANGE = "Income!A1:D5000";
 const CACHE_KEY = "pt.cache.v1";
 const VIEW_KEY = "pt.view";
 const RANGE_KEY = "pt.range";
@@ -106,6 +113,7 @@ function parseAll(raw) {
     monthly: parseMonthly(raw.monthly),
     retirement: parseRetirement(raw.retirement ?? []),
     targets: parseTargets(raw.targets ?? []),
+    income: parseIncome(raw.income ?? []),
     lists,
     history: parseHistory(raw.history),
     historyNext: nextFreeRow(raw.history),
@@ -136,15 +144,17 @@ async function load({ quiet = false } = {}) {
           return [];
         },
       );
-    const [values, meta, retirement, targets] = await Promise.all([
+    const [values, meta, retirement, targets, income] = await Promise.all([
       sheets.batchGet(keys.map((k) => RANGES[k])),
       sheets.meta(),
       optional(RETIREMENT_RANGE),
       optional(TARGETS_RANGE),
+      optional(INCOME_RANGE),
     ]);
     const raw = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
     raw.retirement = retirement;
     raw.targets = targets;
+    raw.income = income;
     state.data = parseAll(raw);
     state.meta = meta;
     state.loadedAt = Date.now();
@@ -263,7 +273,7 @@ function render() {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, retire: renderRetire, rebalance: renderRebalance, add: renderAdd };
+  const views = { home: renderHome, retire: renderRetire, rebalance: renderRebalance, savings: renderSavings, add: renderAdd };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -273,7 +283,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", add: "New Transaction" };
+const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", savings: "Savings", add: "New Transaction" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -893,6 +903,155 @@ function renderRebalance(root) {
   };
 }
 
+// ---------- savings rate ----------
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const monthName = (ym, long = true) => `${MONTHS[Number(ym.slice(5, 7)) - 1]}${long ? ` ${ym.slice(0, 4)}` : ""}`;
+
+/** Bars of the savings rate per month, one coral hue, negative months below the line. */
+function rateBars(months) {
+  const W = 340;
+  const H = 170;
+  const m = { t: 10, r: 4, b: 22, l: 36 };
+  const rates = months.map((x) => x.rate ?? 0);
+  const top = Math.max(0.5, Math.ceil(Math.max(...rates) * 4) / 4);
+  const bottom = Math.min(0, Math.floor(Math.min(...rates) * 4) / 4);
+  const ih = H - m.t - m.b;
+  const y = (v) => m.t + ((top - v) / (top - bottom)) * ih;
+  const slot = (W - m.l - m.r) / months.length;
+  const bw = Math.max(4, slot - 2 * Math.max(2, slot * 0.18));
+  const ticks = [];
+  for (let v = bottom; v <= top + 1e-9; v += 0.25) ticks.push(+v.toFixed(2));
+  const grid = ticks
+    .map((t) => `<line class="${t === 0 ? "base" : "grid"}" x1="${m.l}" x2="${W - m.r}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}"/><text class="axis" x="${m.l - 6}" y="${(y(t) + 4).toFixed(1)}" text-anchor="end">${Math.round(t * 100)}%</text>`)
+    .join("");
+  const bars = months
+    .map((x, i) => {
+      const cx = m.l + slot * i + slot / 2;
+      const label = `<text class="axis" x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle">${monthName(x.month, false).slice(0, 1)}</text>`;
+      if (x.rate === null) return `${label}<text class="axis" x="${cx.toFixed(1)}" y="${(y(0) - 4).toFixed(1)}" text-anchor="middle">·</text>`;
+      const y0 = y(0);
+      const y1 = y(x.rate);
+      const h = Math.max(1, Math.abs(y1 - y0));
+      const yTop = Math.min(y0, y1);
+      const r = Math.min(4, bw / 2, h);
+      // Rounded at the data end only, square on the zero line.
+      const d =
+        x.rate >= 0
+          ? `M${cx - bw / 2},${y0}V${yTop + r}Q${cx - bw / 2},${yTop} ${cx - bw / 2 + r},${yTop}H${cx + bw / 2 - r}Q${cx + bw / 2},${yTop} ${cx + bw / 2},${yTop + r}V${y0}Z`
+          : `M${cx - bw / 2},${y0}V${y0 + h - r}Q${cx - bw / 2},${y0 + h} ${cx - bw / 2 + r},${y0 + h}H${cx + bw / 2 - r}Q${cx + bw / 2},${y0 + h} ${cx + bw / 2},${y0 + h - r}V${y0}Z`;
+      return `${label}<path class="bar${x.rate < 0 ? " neg" : ""}" data-i="${i}" d="${d}"/><rect class="hit" data-i="${i}" x="${(cx - slot / 2).toFixed(1)}" y="${m.t}" width="${slot.toFixed(1)}" height="${ih}"><title>${monthName(x.month)}: ${pct(x.rate)}</title></rect>`;
+    })
+    .join("");
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="Savings rate per month">${grid}${bars}</svg>`;
+}
+
+function renderSavings(root) {
+  const d = state.data;
+  const today = todayIso();
+  const s = savingsByMonth(d.transactions, d.income, today, 12);
+  const recent = [...s.months].reverse();
+  const latest = recent.find((m) => m.income > 0) ?? null;
+  const addIncome = `<button class="btn" id="addIncome">Add income</button>`;
+
+  if (!d.income.length) {
+    root.innerHTML = `
+      <section class="card">
+        <h2>Savings rate</h2>
+        <p>Your savings rate is the share of your income that goes into your accounts each month. Add your net pay (and any bonus or rent) under <strong>Transaction → Income</strong>, and it shows here next to what you deposited that month.</p>
+        ${addIncome}
+      </section>`;
+    $("#addIncome").onclick = goAddIncome;
+    return;
+  }
+
+  root.innerHTML = `
+    <section class="card hero">
+      <div class="label">Savings rate, ${latest ? monthName(latest.month) : "this month"}</div>
+      <div class="value num">${latest ? pct(latest.rate) : "–"}</div>
+      <div class="sub">${latest ? `Saved <span class="num">${eur(latest.saved)}</span> of <span class="num">${eur(latest.income)}</span> income.` : ""}</div>
+    </section>
+
+    <section class="stats">
+      <div class="card stat">
+        <div class="label">12-month average</div>
+        <div class="value num">${pct(s.average)}</div>
+        <div class="sub muted">over ${s.monthsWithIncome} month${s.monthsWithIncome === 1 ? "" : "s"} with income</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Saved in 12 months</div>
+        <div class="value num">${eur(s.saved)}</div>
+        <div class="sub muted">of ${eur(s.income)} income</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Rate per month</h2>
+      <div class="chart" id="rateChart">${rateBars(s.months)}</div>
+      <p class="small muted" id="ratePick" style="margin:8px 0 0">Tap a bar for that month.</p>
+    </section>
+
+    <section class="card">
+      <h2>By month</h2>
+      <ul class="list">${recent
+        .map(
+          (m) => `<li><div class="row"><div><div class="name">${monthName(m.month)}</div><div class="meta num">Saved ${eur(m.saved)} · income ${m.income ? eur(m.income) : "none"}</div></div><div class="right num ${tone(m.rate ?? 0)}">${m.rate === null ? "–" : pct(m.rate)}</div></div></li>`,
+        )
+        .join("")}</ul>
+      <p class="small muted" style="margin:0;padding:10px 0 14px">Saved is what went into your accounts that month: deposits minus withdrawals (a move between two of your accounts cancels out) plus III pillar contributions. IBKR buys aren't added again, since they're paid from IBKR cash. A "New total" deposit that only adds interest counts as saved too.</p>
+      ${addIncome}
+    </section>`;
+
+  $("#addIncome").onclick = goAddIncome;
+  const pick = (i) => {
+    const m = s.months[i];
+    $("#ratePick").innerHTML = `${monthName(m.month)}: <span class="num">${pct(m.rate)}</span>, saved <span class="num">${eur(m.saved)}</span> of <span class="num">${eur(m.income)}</span>`;
+    root.querySelectorAll("#rateChart .bar").forEach((b) => b.classList.toggle("on", b.dataset.i === String(i)));
+  };
+  root.querySelectorAll("#rateChart .hit").forEach((h) => h.addEventListener("pointerdown", () => pick(Number(h.dataset.i))));
+  root.querySelectorAll("#rateChart .hit").forEach((h) => h.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && pick(Number(h.dataset.i))));
+}
+
+function goAddIncome() {
+  const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
+  ls.set("pt.lastTx", JSON.stringify({ ...last, type: "INCOME" }));
+  go("add");
+}
+
+/** Save an income row to the Income tab, making the tab first if the sheet has none. */
+async function saveIncome(f) {
+  const { row, errors } = incomeRow(f);
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (!row) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const meta = await freshMeta();
+    let tab = meta.tabs.Income;
+    let n;
+    if (!tab) {
+      tab = await sheets.addTab("Income");
+      await sheets.write([{ range: "Income!A1:D1", values: [INCOME_HEADER] }]);
+      n = 2;
+    } else {
+      const [grid] = await sheets.batchGet([INCOME_RANGE]);
+      if (!grid.length) await sheets.write([{ range: "Income!A1:D1", values: [INCOME_HEADER] }]);
+      n = nextFreeRow(grid.length ? grid : [INCOME_HEADER]);
+    }
+    await sheets.ensureRows(tab, n);
+    await sheets.write([{ range: `Income!A${n}:D${n}`, values: [row] }]);
+    ls.set("pt.lastTx", JSON.stringify({ type: "INCOME", source: row[1] }));
+    showBanner(`Saved ${esc(row[1].toLowerCase())} of ${eurCents(row[2])} for ${monthName(row[0].slice(0, 7))}.`, "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
+}
+
 // ---------- add transaction ----------
 
 const TX_MODES = [
@@ -903,6 +1062,7 @@ const TX_MODES = [
   ["PENSION", "III pillar"],
   ["OPTIONS", "Options"],
   ["REAL_ESTATE", "Real estate"],
+  ["INCOME", "Income"],
 ];
 const NEW_FUND = "__new";
 
@@ -972,6 +1132,12 @@ function renderAdd(root) {
           </label>
           <label class="field">New value (€)<input name="propertyValue" inputmode="decimal" autocomplete="off"></label>
         </div>
+        <div class="two" data-for="income">
+          <label class="field">Source
+            <select name="source">${INCOME_SOURCES.map((x) => `<option ${x === (last.source ?? "Salary") ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+          </label>
+          <label class="field">Net amount (€)<input name="amount" inputmode="decimal" autocomplete="off" placeholder="after tax"></label>
+        </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
         <ul class="errors" id="txErrors"></ul>
@@ -1040,7 +1206,9 @@ function renderAdd(root) {
     form.querySelector('[data-for="trade"]').hidden = !trade;
     const opts = type === "OPTIONS";
     const estate = type === "REAL_ESTATE";
-    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate;
+    const income = type === "INCOME";
+    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate || income;
+    form.querySelector('[data-for="income"]').hidden = !income;
     form.querySelector('[data-for="realestate"]').hidden = !estate;
     form.querySelector('[data-for="pension"]').hidden = !pension;
     form.querySelector('[data-for="options"]').hidden = !opts;
@@ -1085,6 +1253,11 @@ function renderAdd(root) {
       const acct = properties.find((a) => a.name === f.get("property"));
       const value = num(String(f.get("propertyValue") ?? "").replace(",", "."));
       if (acct) msg = `Now ${eurCents(acct.value)}${value !== null ? `, ${eurCents(value)} after (${value >= acct.value ? "+" : "−"}${eurCents(Math.abs(value - acct.value))})` : ""}.`;
+    } else if (income) {
+      const month = String(f.get("date") ?? "").slice(0, 7);
+      const had = d.income.filter((x) => x.date.slice(0, 7) === month).reduce((sum, x) => sum + x.amount, 0);
+      const amount = num(String(f.get("amount") ?? "").replace(",", "."));
+      if (/^\d{4}-\d{2}$/.test(month)) msg = `Counts toward ${monthName(month)}${had ? `, which has ${eurCents(had)} already` : ""}${amount ? `: ${eurCents(had + amount)} in total` : ""}. Saved to the Income tab.`;
     } else if (opts && options) {
       const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
       const value = num(f.get("optionValue")) ?? options.price ?? 0;
@@ -1101,6 +1274,7 @@ function renderAdd(root) {
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
     if (f.type === "REAL_ESTATE") return saveRealEstate(f);
+    if (f.type === "INCOME") return saveIncome(f);
     if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
     if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
       return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
