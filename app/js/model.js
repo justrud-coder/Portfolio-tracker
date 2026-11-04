@@ -237,45 +237,102 @@ export function addMonths(iso, n) {
   return first.toISOString().slice(0, 10);
 }
 
+const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
+
 /**
- * Change of `total` since a baseline snapshot: the last one on or before
- * `fromDate`, or (when `fallbackFirstAfter`) the first one after it.
+ * Change of `total` since the snapshot closest to `target` (either side),
+ * ignoring snapshots from `today` on. Ties go to the earlier snapshot.
  */
-function changeFrom(monthly, total, fromDate, fallbackFirstAfter = false) {
+function changeNear(monthly, total, target, today) {
   let base = null;
-  for (const m of monthly) if (m.date <= fromDate) base = m;
-  if (!base && fallbackFirstAfter) base = monthly.find((m) => m.date > fromDate) ?? null;
+  for (const m of monthly) {
+    if (m.date >= today) continue;
+    if (!base || Math.abs(dayNumber(m.date) - dayNumber(target)) < Math.abs(dayNumber(base.date) - dayNumber(target))) base = m;
+  }
+  if (!base) return { value: null, pct: null, from: null };
+  const value = total - base.total;
+  return { value, pct: base.total ? value / base.total : null, from: base.date };
+}
+
+/** Last day of the month before `iso`'s month. */
+export function endOfPreviousMonth(iso) {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+}
+
+/** Change of `total` since the last snapshot on or before `date`. */
+function changeSince(monthly, total, date) {
+  let base = null;
+  for (const m of monthly) if (m.date <= date) base = m;
   if (!base) return { value: null, pct: null, from: null };
   const value = total - base.total;
   return { value, pct: base.total ? value / base.total : null, from: base.date };
 }
 
 /**
- * Change over the last month (against the latest snapshot at least a month old)
- * and year to date (against the last snapshot of the previous year, or the
- * year's first snapshot when there is none).
+ * Change this month (against the last snapshot on or before the last day of
+ * the previous month) and year to date (against the snapshot closest to
+ * 31 December of the previous year, since older history isn't daily).
  */
 export function periodChanges(monthly, total, today) {
-  const year = today.slice(0, 4);
+  const year = Number(today.slice(0, 4));
   return {
-    month: changeFrom(monthly, total, addMonths(today, -1)),
-    ytd: changeFrom(monthly, total, `${Number(year) - 1}-12-31`, true),
+    month: changeSince(monthly, total, endOfPreviousMonth(today)),
+    ytd: changeNear(monthly, total, `${year - 1}-12-31`, today),
   };
 }
 
 /** Overview groups for the accounts list, in display order. */
 export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
 
-/** Active accounts grouped by asset class: the four main groups first, then any others. */
-export function groupAccounts(accounts) {
-  const groups = new Map(ACCOUNT_GROUPS.map((g) => [g, []]));
+/** Overview group names: asset classes shown under another name. */
+export const GROUP_NAMES = { Pension: "III pillar pension" };
+
+/**
+ * Overview groups. Accounts valued from holdings are replaced by their
+ * holdings (IBKR shows each stock; IBKR cash goes to Cash), and manual
+ * accounts carry the date they last changed: their snapshot or a later
+ * deposit or withdrawal.
+ */
+export function overviewGroups(accounts, holdings, transactions = []) {
+  const order = [...ACCOUNT_GROUPS, GROUP_NAMES.Pension];
+  const groups = new Map(order.map((g) => [g, []]));
+  const add = (cls, item) => {
+    const name = GROUP_NAMES[cls] ?? cls;
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(item);
+  };
+  const lastMove = new Map();
+  for (const t of transactions) {
+    const [date, account, type] = t.cells ?? t;
+    const iso = serialToIso(date);
+    if (!iso || (type !== "DEPOSIT" && type !== "WITHDRAWAL")) continue;
+    if (!lastMove.has(account) || iso > lastMove.get(account)) lastMove.set(account, iso);
+  }
   for (const a of accounts.filter((x) => x.active)) {
-    if (!groups.has(a.assetClass)) groups.set(a.assetClass, []);
-    groups.get(a.assetClass).push(a);
+    if (a.valuation === "holdings") {
+      for (const h of holdings.filter((x) => x.position === a.name)) {
+        if (!h.units && !h.value) continue;
+        const isCash = a.name === BROKER && h.symbol === BROKER_CASH;
+        add(isCash ? "Cash" : a.assetClass, {
+          kind: "holding",
+          name: isCash ? "IBKR cash" : h.name || h.symbol,
+          account: a.name,
+          holding: h,
+          value: h.value,
+          gain: isCash ? null : h.gain,
+          gainPct: isCash ? null : h.gainPct,
+        });
+      }
+    } else {
+      const moved = lastMove.get(a.name);
+      const updated = [a.lastSnapshot, moved].filter(Boolean).sort().pop() ?? null;
+      add(a.assetClass, { kind: "account", name: a.name, account: a.name, value: a.value, gain: a.gain, gainPct: a.gainPct, updated });
+    }
   }
   return [...groups.entries()]
     .filter(([, list]) => list.length)
-    .map(([name, list]) => ({ name, accounts: list.sort((a, b) => b.value - a.value), total: list.reduce((s, a) => s + a.value, 0) }));
+    .map(([name, items]) => ({ name, items: items.sort((x, y) => y.value - x.value), total: items.reduce((s, x) => s + x.value, 0) }));
 }
 
 /**

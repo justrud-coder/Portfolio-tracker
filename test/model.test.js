@@ -265,8 +265,14 @@ test("sameTransaction compares columns A to I only", async () => {
   assert.equal(sameTransaction(undefined, row), false);
 });
 
-test("monthly snapshot saves active accounts on the Vilnius date", async () => {
-  const { snapshotValues, todayVilnius } = await import("../scripts/snapshot.mjs");
+test("daily snapshot saves active accounts on the Vilnius date", async () => {
+  const { snapshotValues, todayVilnius, snapshotDay } = await import("../scripts/snapshot.mjs");
+  // 22:45 in Vilnius (winter) and 23:45 (summer) count for that day...
+  assert.equal(snapshotDay(new Date("2026-11-04T20:45:00Z")), "2026-11-04");
+  assert.equal(snapshotDay(new Date("2026-07-04T20:45:00Z")), "2026-07-04");
+  // ...and a run delayed past midnight still counts for the evening before.
+  assert.equal(snapshotDay(new Date("2026-07-04T21:30:00Z")), "2026-07-04");
+  assert.equal(snapshotDay(new Date("2026-07-05T08:00:00Z")), "2026-07-05");
   assert.equal(todayVilnius(new Date("2026-11-30T22:30:00Z")), "2026-12-01");
   assert.equal(todayVilnius(new Date("2026-12-01T06:00:00Z")), "2026-12-01");
   const accounts = [
@@ -291,22 +297,43 @@ test("overview changes, account groups, new-total deposits and repeats", async (
     { date: "2026-10-05", total: 242162 },
   ];
   const c = m.periodChanges(monthly, 250000, "2026-11-04");
-  assert.equal(c.month.from, "2026-09-05");
-  assert.equal(c.month.value, 250000 - 237713);
-  assert.equal(c.ytd.from, "2025-12-05");
-  assert.equal(c.ytd.value, 250000 - 195078);
-  // No snapshot last year: YTD starts at the year's first snapshot.
-  assert.equal(m.periodChanges(monthly.slice(1), 250000, "2026-11-04").ytd.from, "2026-01-08");
+  assert.equal(m.endOfPreviousMonth("2026-11-04"), "2026-10-31");
+  assert.equal(m.endOfPreviousMonth("2026-03-15"), "2026-02-28");
+  assert.equal(m.endOfPreviousMonth("2026-01-01"), "2025-12-31");
+  // Last snapshot on or before 31 Oct: 5 Oct.
+  assert.equal(c.month.from, "2026-10-05");
+  assert.equal(c.month.value, 250000 - 242162);
+  // With daily snapshots, the 31 Oct one wins over later ones.
+  const daily = [...monthly, { date: "2026-10-31", total: 245000 }, { date: "2026-11-03", total: 248000 }];
+  assert.equal(m.periodChanges(daily, 250000, "2026-11-04").month.from, "2026-10-31");
+  // Closest snapshot to 31 Dec: 8 Jan (8 days) beats 5 Dec (26 days).
+  assert.equal(c.ytd.from, "2026-01-08");
+  assert.equal(c.ytd.value, 250000 - 201190);
+  assert.equal(m.periodChanges(monthly.slice(0, 1), 250000, "2026-11-04").ytd.from, "2025-12-05");
   assert.equal(m.periodChanges([], 1, "2026-11-04").month.value, null);
 
-  const groups = m.groupAccounts([
-    { name: "Cash", assetClass: "Cash", active: true, value: 10 },
-    { name: "IBKR", assetClass: "Stocks", active: true, value: 5 },
-    { name: "III pillar", assetClass: "Pension", active: true, value: 7 },
-    { name: "Crypto", assetClass: "Crypto", active: false, value: 0 },
-    { name: "Vinted options", assetClass: "Options", active: true, value: 3 },
+  const og = m.overviewGroups(
+    [
+      { name: "IBKR", assetClass: "Stocks", valuation: "holdings", active: true, value: 150 },
+      { name: "Cash", assetClass: "Cash", valuation: "manual", active: true, value: 10, lastSnapshot: "2026-10-05", gain: null },
+      { name: "Indeliai", assetClass: "Cash", valuation: "manual", active: true, value: 20, lastSnapshot: "2026-10-05", gain: null },
+      { name: "III pillar", assetClass: "Pension", valuation: "holdings", active: true, value: 7 },
+    ],
+    [
+      { position: "IBKR", symbol: "VWCE.DE", name: "Vanguard", units: 1, value: 100, gain: 5, gainPct: 0.05 },
+      { position: "IBKR", symbol: "CASH", name: "Cash held at IBKR", units: 50, value: 50, gain: null },
+      { position: "IBKR", symbol: "OLD", name: "Sold", units: 0, value: 0 },
+      { position: "III pillar", symbol: "ARTEA-AA16", name: "Artea Ambicingas Active 16+", units: 10, value: 7, gain: null },
+    ],
+    [{ cells: [46330 /* 2026-11-04 */, "Indeliai", "DEPOSIT", "", "", "", "", 5] }],
+  );
+  assert.deepEqual(og.map((g) => [g.name, g.total, g.items.map((i) => i.name)]), [
+    ["Stocks", 100, ["Vanguard"]],
+    ["Cash", 80, ["IBKR cash", "Indeliai", "Cash"]],
+    ["III pillar pension", 7, ["Artea Ambicingas Active 16+"]],
   ]);
-  assert.deepEqual(groups.map((g) => [g.name, g.total]), [["Stocks", 5], ["Cash", 10], ["Options", 3], ["Pension", 7]]);
+  assert.equal(og[1].items.find((i) => i.name === "Indeliai").updated, "2026-11-04");
+  assert.equal(og[1].items.find((i) => i.name === "Cash").updated, "2026-10-05");
 
   assert.deepEqual(m.moveToTotal(3500, 4200), { type: "DEPOSIT", amount: 700 });
   assert.deepEqual(m.moveToTotal(3500, 3000.5), { type: "WITHDRAWAL", amount: 499.5 });

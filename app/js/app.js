@@ -21,7 +21,7 @@ import {
   parseMonthly,
   summarize,
   periodChanges,
-  groupAccounts,
+  overviewGroups,
   moveToTotal,
   repeatForm,
   transactionRow,
@@ -37,7 +37,7 @@ const RANGES = {
   holdings: "Holdings!A1:M300",
   monthly: "Monthly!A1:Z2000",
   lists: "Lists!A1:J60",
-  history: "History!A1:D10000",
+  history: "History!A:D",
   transactions: "Transactions!A1:I10000",
 };
 // Read on its own so a sheet without a Retirement tab still loads.
@@ -284,18 +284,13 @@ function renderHome(root) {
   if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
 
   const changes = periodChanges(d.monthly, s.total, today);
+  const groups = overviewGroups(d.accounts, d.holdings, d.transactions);
   const changeTile = (label, c, fromWord) => `
       <div class="card stat">
         <div class="label">${label}</div>
         <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
         <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
       </div>`;
-
-  const gainTile =
-    s.gain === null
-      ? `<div class="value muted">–</div><div class="sub muted">Add BUY transactions with prices to see this.</div>`
-      : `<div class="value num ${tone(s.gain)}">${signedEur(s.gain)}</div>
-         <div class="sub"><span class="${tone(s.gain)} num">${signedPct(s.gainPct)}</span> <span class="muted">on ${eur(s.invested)} invested</span></div>`;
 
   root.innerHTML = `
     <section class="card hero">
@@ -307,10 +302,6 @@ function renderHome(root) {
     <section class="stats">
       ${changeTile("Last month", changes.month, "since")}
       ${changeTile("This year", changes.ytd, "since")}
-      <div class="card stat wide">
-        <div class="label">Gain vs cost</div>
-        ${gainTile}
-      </div>
     </section>
 
     <section class="card">
@@ -325,15 +316,15 @@ function renderHome(root) {
 
     <section class="card">
       <h2>Allocation</h2>
-      <div class="bars">${bars(s.allocation)}</div>
+      ${donut(groups.map((g) => ({ name: g.name, value: g.total })))}
     </section>
 
-    ${groupAccounts(d.accounts)
+    ${groups
       .map(
         (g) => `
     <section class="card">
       <div class="card-head"><h2>${esc(g.name)}</h2><span class="group-total num">${eur(g.total)}</span></div>
-      <ul class="list">${accountsList(d, g.accounts)}</ul>
+      <ul class="list">${groupItems(g.items)}</ul>
     </section>`,
       )
       .join("")}
@@ -365,38 +356,50 @@ function renderHome(root) {
   };
 }
 
-function bars(items) {
-  const max = Math.max(...items.map((i) => i.value), 1);
-  return items
-    .map(
-      (i) => `
-    <div class="bar-row">
-      <div class="bar-top"><span>${esc(i.name)}</span><span class="num">${eur(i.value)} · ${pct(i.share)}</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, (i.value / max) * 100).toFixed(1)}%"></div></div>
-    </div>`,
-    )
+// Fixed colours per group to match the coral theme, readable on light and dark.
+const GROUP_COLORS = { Stocks: "#e8475f", Cash: "#00a699", "Real estate": "#f26b3a", Options: "#8a5cf5", "III pillar pension": "#f5b400" };
+const SPARE_COLORS = ["#c13584", "#717171", "#b08968", "#3fa9f5"];
+
+/** Donut of each group's share of the total, with a legend. */
+function donut(items) {
+  const shown = items.filter((i) => i.value > 0);
+  const total = shown.reduce((s, i) => s + i.value, 0);
+  if (!total) return `<p class="muted">Nothing to show yet.</p>`;
+  let spare = 0;
+  const colored = shown.map((i) => ({ ...i, color: GROUP_COLORS[i.name] ?? SPARE_COLORS[spare++ % SPARE_COLORS.length] }));
+  const r = 15.9155; // circumference 100, so dash lengths are percentages
+  let offset = 25; // start at 12 o'clock
+  const arcs = colored
+    .map((i) => {
+      const len = (i.value / total) * 100;
+      const gap = colored.length > 1 ? Math.min(0.6, len / 2) : 0;
+      const arc = `<circle r="${r}" cx="21" cy="21" fill="none" stroke="${i.color}" stroke-width="6" stroke-dasharray="${(len - gap).toFixed(3)} ${(100 - len + gap).toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"><title>${esc(i.name)} ${pct(i.value / total)}</title></circle>`;
+      offset -= len;
+      return arc;
+    })
     .join("");
+  return `
+    <div class="donut">
+      <svg viewBox="0 0 42 42" role="img" aria-label="Share by asset class">${arcs}</svg>
+      <ul class="legend">${colored
+        .map((i) => `<li><span class="swatch" style="background:${i.color}"></span><span class="name">${esc(i.name)}</span><span class="share">${pct(i.value / total)}</span><span class="amt num">${eur(i.value)}</span></li>`)
+        .join("")}</ul>
+    </div>`;
 }
 
-function accountsList(d, accounts) {
-  return accounts
-    .map((a) => {
-      const holdings = d.holdings.filter((h) => h.position === a.name);
-      const right = `<div class="right"><div class="num">${eur(a.value)}</div>${
-        a.gain !== null ? `<div class="small ${tone(a.gain)} num">${signedEur(a.gain)} (${signedPct(a.gainPct)})</div>` : ""
-      }</div>`;
-      const meta = `${esc(a.assetClass)} · ${a.valuation === "holdings" ? "live prices" : a.lastSnapshot ? `as of ${shortDate(a.lastSnapshot)}` : "no snapshot"}`;
-      const head = `<div><div class="name">${esc(a.name)}</div><div class="meta">${meta}</div></div>${right}`;
-      if (!holdings.length) return `<li><div class="row">${head}</div></li>`;
-      return `<li><details><summary class="row">${head}</summary><ul class="sublist">${holdings
-        .map(
-          (h) => `<li><div><div>${esc(h.symbol)}</div><div class="meta small muted">${num(h.units)?.toLocaleString("en-GB", { maximumFractionDigits: 4 })} × ${
-            h.price === null ? "no price" : eurCents(h.price)
-          }${h.priceDate ? ` · ${shortDate(h.priceDate)}` : ""}</div></div><div class="right"><div class="num">${eur(h.value)}</div>${
-            h.gain !== null ? `<div class="small ${tone(h.gain)} num">${signedEur(h.gain)}</div>` : ""
-          }</div></li>`,
-        )
-        .join("")}</ul></details></li>`;
+/** Rows of an overview group: stocks and funds from holdings, and manual accounts. */
+function groupItems(items) {
+  return items
+    .map((i) => {
+      const gain = i.gain !== null && i.gain !== undefined ? `<div class="small ${tone(i.gain)} num">${signedEur(i.gain)}${i.gainPct !== null && i.gainPct !== undefined ? ` (${signedPct(i.gainPct)})` : ""}</div>` : "";
+      let meta;
+      if (i.kind === "holding") {
+        const h = i.holding;
+        meta = i.name === "IBKR cash" ? "IBKR" : `${num(h.units)?.toLocaleString("en-GB", { maximumFractionDigits: 4 })} × ${h.price === null ? "no price" : eurCents(h.price)}${h.priceDate ? ` · ${shortDate(h.priceDate)}` : ""}`;
+      } else {
+        meta = i.updated ? `as of ${shortDate(i.updated)}` : "no snapshot";
+      }
+      return `<li><div class="row"><div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div></div><div class="right"><div class="num">${eur(i.value)}</div>${gain}</div></div></li>`;
     })
     .join("");
 }
@@ -418,6 +421,12 @@ const RETIRE_FIELDS = [
 
 const STATUS_TONE = { Ahead: "up", "On track": "up", Behind: "down" };
 
+function progressBar(share, caption, label) {
+  const p = Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : 0;
+  return `<div class="progress" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><div style="width:${(p * 100).toFixed(1)}%"></div></div>
+      <div class="sub muted">${caption}</div>`;
+}
+
 function retireSummary(v, plan) {
   const t = STATUS_TONE[plan.status];
   const pace =
@@ -431,8 +440,8 @@ function retireSummary(v, plan) {
       <div class="label">Retire at ${esc(v.retireAge)} on ${eur(v.spend)}/month</div>
       <div class="value ${t}">${esc(plan.status)}</div>
       <div class="sub">Need <span class="num">${eur(plan.needed)}</span> at ${esc(v.retireAge)}. Investing ${eur(v.monthly)}/month gets you to <span class="num">${eur(plan.projected)}</span>.</div>
-      <div class="progress" role="progressbar" aria-label="Projected vs needed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.min(1, plan.progress) * 100)}"><div style="width:${(Math.max(0, Math.min(1, plan.progress)) * 100).toFixed(1)}%"></div></div>
-      <div class="sub muted">${pct(plan.progress)} of the target at ${esc(v.retireAge)}</div>
+      ${progressBar(plan.progress, `Projected at ${esc(v.retireAge)}: <span class="num">${pct(plan.progress)}</span> of the target`, "Projected vs needed")}
+      ${progressBar(plan.counted / plan.needed, `Today: <span class="num">${eur(plan.counted)}</span>, <span class="num">${pct(plan.counted / plan.needed)}</span> of the target`, "Today vs needed")}
     </section>
 
     <section class="stats">
@@ -592,7 +601,7 @@ function renderAdd(root) {
   const options = d.holdings.find((h) => h.position === OPTIONS);
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
   const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
-  const recent = d.transactions.slice(-8).reverse();
+  const recent = d.transactions.slice(-10).reverse();
 
   root.innerHTML = `
     <section class="card">
@@ -628,6 +637,7 @@ function renderAdd(root) {
           <label class="field" data-for="newfund">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
           <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
           <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
+          <label class="field">New unit value (€)<input name="pensionValue" inputmode="decimal" autocomplete="off" placeholder="optional"></label>
         </div>
         <div class="two" data-for="options">
           <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
@@ -719,7 +729,17 @@ function renderAdd(root) {
     } else if (pension) {
       const units = num(f.get("pensionUnits"));
       const cash = num(f.get("pensionCash"));
-      if (units && cash) msg = `Unit price ${(cash / units).toLocaleString("en-IE", { maximumFractionDigits: 4 })} €. It becomes the fund's latest price.`;
+      const value = num(String(f.get("pensionValue") ?? "").replace(",", "."));
+      const fund = funds.find((h) => h.symbol === f.get("fund"));
+      const unit = (x) => `${x.toLocaleString("en-IE", { maximumFractionDigits: 6 })} €`;
+      if (value && fund) {
+        const held = (num(fund.units) ?? 0) + (units ?? 0);
+        msg = `${held.toLocaleString("en-IE", { maximumFractionDigits: 2 })} units × ${unit(value)} = ${eurCents(held * value)} (now ${eurCents(fund.value ?? 0)}).`;
+      } else if (units && cash) {
+        msg = `Unit price ${unit(cash / units)}. It becomes the fund's latest price.`;
+      } else if (fund) {
+        msg = `Unit value now ${unit(num(fund.price) ?? 0)}. Enter a new unit value to update the total, units to add a contribution, or both.`;
+      }
     } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
       const acct = f.get("account");
       const current = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
@@ -746,6 +766,13 @@ function renderAdd(root) {
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
     if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
+    if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
+      return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
+    const pensionValue = num(String(f.pensionValue ?? "").replace(",", "."));
+    if (f.type === "PENSION" && String(f.pensionValue ?? "").trim() && !(pensionValue > 0)) {
+      $("#txErrors").innerHTML = "<li>New unit value must be more than 0.</li>";
+      return;
+    }
     const pension = f.type === "PENSION";
     const newFund = pension && f.fund === NEW_FUND;
     const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
@@ -758,8 +785,8 @@ function renderAdd(root) {
     try {
       let what;
       if (pension) {
-        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null);
-        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null, pensionValue);
+        what = `${num(row[4])} units of ${esc(fund.name)}${pensionValue ? ` and a unit value of ${pensionValue} €` : ""}`;
         ls.set("pt.lastTx", JSON.stringify({ type: f.type, fund: fund.symbol }));
       } else {
         await saveTransaction(row);
@@ -797,11 +824,12 @@ async function saveTransaction(row) {
  * Save III pillar units. A new fund gets its own Holdings row first. The unit
  * price paid becomes the fund's latest price unless a newer one is already set.
  */
-async function savePension(row, newFundName) {
+async function savePension(row, newFundName, unitValue = null) {
   const [holdings] = await sheets.batchGet([RANGES.holdings]);
   const meta = await freshMeta();
   const date = row[0];
-  const price = row[5];
+  // A unit value typed in wins over the price worked out from the amount paid.
+  const price = unitValue ?? row[5];
   let fund;
   if (newFundName) {
     const tab = meta.tabs.Holdings;
@@ -824,6 +852,37 @@ async function savePension(row, newFundName) {
   }
   await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
   return fund;
+}
+
+/** III pillar with only a new unit value: update the fund's latest price, no transaction. */
+async function savePensionValue(f, fund) {
+  const value = num(String(f.pensionValue ?? "").replace(",", "."));
+  const errors = [];
+  if (!fund) errors.push("Pick a fund.");
+  if (!String(f.pensionValue ?? "").trim()) errors.push("Enter units and the amount paid, a new unit value, or both.");
+  else if (!(value > 0)) errors.push("New unit value must be more than 0.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    // Re-read so the right Holdings row is written even if rows moved.
+    const [holdings] = await sheets.batchGet([RANGES.holdings]);
+    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === fund.symbol);
+    if (i < 0) throw new Error(`The fund ${fund.symbol} isn't on the Holdings tab any more. Refresh and try again.`);
+    await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
+    ls.set("pt.lastTx", JSON.stringify({ type: "PENSION", fund: fund.symbol }));
+    const units = num(fund.units) ?? 0;
+    showBanner(`Saved a unit value of ${value} € for ${esc(fund.name || fund.symbol)}: ${eurCents(units * value)} in total.`, "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
 }
 
 /** Options tab of the form: add options received and/or set the value per option. */
