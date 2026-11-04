@@ -4,6 +4,7 @@ A phone app for the **Portfolio tracker** Google Sheet. It's a PWA: you install 
 
 - **Overview:** total value, change since the last snapshot and over the last month, gain against cost basis, value over time, allocation by asset class and liquidity, and every account (tap a holdings account to see its positions).
 - **Goals:** progress for each row of the Goals tab.
+- **Retirement:** the plan to retire at a set age on a monthly spend in today's money: the portfolio needed, the monthly investment needed, whether you're ahead, on track or behind, and the monthly spend your portfolio would pay if you retired today. Edit the inputs in the app and they're saved to the Retirement tab of the sheet, which has the same formulas.
 - **Transaction:** add a buy, sell, deposit, withdrawal, dividend or fee to the Transactions tab.
 - **Snapshot:** save this month's value for every active account to the History tab. Holdings accounts are filled in with today's live value; manual accounts start at their last value so you only change what moved.
 

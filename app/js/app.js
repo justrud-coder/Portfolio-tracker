@@ -1,8 +1,12 @@
 import { CONFIG } from "../config.js";
 import { AuthError, Sheets, getToken, handleRedirect, signIn, signOut } from "./google.js";
 import {
+  COUNTED_OPTIONS,
   TX_TYPES,
+  countedValue,
   nextFreeRow,
+  parseRetirement,
+  retirementPlan,
   parseAccounts,
   parseGoals,
   parseHistory,
@@ -28,6 +32,8 @@ const RANGES = {
   history: "History!A1:D10000",
   transactions: "Transactions!A1:I10000",
 };
+// Read on its own so a sheet without a Retirement tab still loads.
+const RETIREMENT_RANGE = "Retirement!A1:C40";
 const CACHE_KEY = "pt.cache.v1";
 const VIEW_KEY = "pt.view";
 const RANGE_KEY = "pt.range";
@@ -75,6 +81,7 @@ function parseAll(raw) {
     holdings: parseHoldings(raw.holdings),
     monthly: parseMonthly(raw.monthly),
     goals: parseGoals(raw.goals),
+    retirement: parseRetirement(raw.retirement ?? []),
     lists,
     history: parseHistory(raw.history),
     historyNext: nextFreeRow(raw.history),
@@ -97,8 +104,19 @@ async function load({ quiet = false } = {}) {
   if (!quiet) setStatus("Updating…");
   try {
     const keys = Object.keys(RANGES);
-    const [values, meta] = await Promise.all([sheets.batchGet(keys.map((k) => RANGES[k])), sheets.meta()]);
+    const [values, meta, retirement] = await Promise.all([
+      sheets.batchGet(keys.map((k) => RANGES[k])),
+      sheets.meta(),
+      sheets.batchGet([RETIREMENT_RANGE]).then(
+        ([g]) => g,
+        (e) => {
+          if (e instanceof AuthError) throw e;
+          return [];
+        },
+      ),
+    ]);
     const raw = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+    raw.retirement = retirement;
     state.data = parseAll(raw);
     state.meta = meta;
     state.loadedAt = Date.now();
@@ -164,8 +182,8 @@ function needSignIn() {
     $("#tabs").hidden = true;
     $("#view").innerHTML = `
       <div class="signin">
-        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
-        <h2 style="font-size:20px;color:var(--text)">Portfolio</h2>
+        <img class="app-icon" src="icons/icon-192.png" alt="">
+        <h2>Portfolio</h2>
         <p>Sign in with the Google account that owns the <strong>Portfolio tracker</strong> sheet. The app reads and writes it directly; nothing goes anywhere else.</p>
         <button class="btn" id="signin">Sign in with Google</button>
       </div>`;
@@ -177,8 +195,9 @@ function setupScreen() {
   $("#tabs").hidden = true;
   $("#refresh").hidden = true;
   $("#view").innerHTML = `
+    <h1 class="large-title">Setup</h1>
     <div class="card">
-      <h2 style="color:var(--text);font-size:18px">One-time setup</h2>
+      <h2>One-time setup</h2>
       <p class="small">Paste the OAuth client ID you created in Google Cloud. It ends in <code>.apps.googleusercontent.com</code>. It is saved on this phone only.</p>
       <form id="setup">
         <label class="field">Client ID<input name="id" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
@@ -212,8 +231,20 @@ function render() {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, goals: renderGoals, add: renderAdd, snapshot: renderSnapshot };
-  (views[state.view] ?? renderHome)($("#view"));
+  const views = { home: renderHome, goals: renderGoals, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
+  const view = views[state.view] ? state.view : "home";
+  const root = $("#view");
+  views[view](root);
+  // iOS large title, which collapses into the navigation bar on scroll.
+  root.insertAdjacentHTML("afterbegin", `<h1 class="large-title">${TITLES[view]}</h1>`);
+  $("#title").textContent = TITLES[view];
+  onScroll();
+}
+
+const TITLES = { home: "Portfolio", goals: "Goals", retire: "Retirement", add: "New Transaction", snapshot: "Snapshot" };
+
+function onScroll() {
+  $(".top").classList.toggle("scrolled", window.scrollY > 36);
 }
 
 // ---------- overview ----------
@@ -296,8 +327,8 @@ function renderHome(root) {
       <ul class="list">${accountsList(d)}</ul>
     </section>
 
-    <p class="muted small center">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
-    · <a href="#" id="signout" class="muted">Sign out</a></p>
+    <p class="footnote">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
+    · <a href="#" id="signout">Sign out</a></p>
   `;
 
   const draw = () => lineChart($("#chart"), filterRange(points));
@@ -382,6 +413,149 @@ function renderGoals(root) {
       </section>`;
     })
     .join("");
+}
+
+// ---------- retirement ----------
+
+const RETIRE_FIELDS = [
+  { key: "currentAge", label: "Current age", kind: "age" },
+  { key: "retireAge", label: "Retire at age", kind: "age" },
+  { key: "endAge", label: "Plan until age", kind: "age" },
+  { key: "pensionAge", label: "Pension from age", kind: "age" },
+  { key: "spend", label: "Spend (€/month)", kind: "eur" },
+  { key: "pension", label: "Pension (€/month)", kind: "eur" },
+  { key: "monthly", label: "Investing (€/month)", kind: "eur" },
+  { key: "returnPre", label: "Real return before (%)", kind: "pct" },
+  { key: "returnPost", label: "Real return after (%)", kind: "pct" },
+  { key: "inflation", label: "Inflation (%)", kind: "pct" },
+];
+
+const STATUS_TONE = { Ahead: "up", "On track": "up", Behind: "down" };
+
+function retireSummary(v, plan) {
+  const t = STATUS_TONE[plan.status];
+  const pace =
+    plan.earliestAge === null
+      ? `At this pace the portfolio doesn't reach ${eur(v.spend)}/month before ${v.endAge}.`
+      : plan.earliestAge <= v.retireAge
+        ? `At this pace you could retire at <strong>${plan.earliestAge}</strong>.`
+        : `At this pace you reach ${eur(v.spend)}/month at age <strong>${plan.earliestAge}</strong>.`;
+  return `
+    <section class="card hero">
+      <div class="label">Retire at ${esc(v.retireAge)} on ${eur(v.spend)}/month</div>
+      <div class="value ${t}">${esc(plan.status)}</div>
+      <div class="sub">Need <span class="num">${eur(plan.needed)}</span> at ${esc(v.retireAge)}. Investing ${eur(v.monthly)}/month gets you to <span class="num">${eur(plan.projected)}</span>.</div>
+      <div class="progress" role="progressbar" aria-label="Projected vs needed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.min(1, plan.progress) * 100)}"><div style="width:${(Math.max(0, Math.min(1, plan.progress)) * 100).toFixed(1)}%"></div></div>
+      <div class="sub muted">${pct(plan.progress)} of the target at ${esc(v.retireAge)}</div>
+    </section>
+
+    <section class="stats">
+      <div class="card stat">
+        <div class="label">Invest per month</div>
+        <div class="value num">${plan.perMonth === null ? "–" : eur(plan.perMonth)}</div>
+        <div class="sub muted">from now to ${esc(v.retireAge)} to hit the target</div>
+      </div>
+      <div class="card stat">
+        <div class="label">If you retired today</div>
+        <div class="value num">${eur(plan.todaySpend)}<span class="small muted">/mo</span></div>
+        <div class="sub muted">from ${eur(plan.counted)} until ${esc(v.endAge)}</div>
+      </div>
+      <div class="card stat wide">
+        <div class="label">At your current pace</div>
+        <div class="value num">${eur(plan.supportedSpend)}<span class="small muted">/mo at ${esc(v.retireAge)}</span></div>
+        <div class="sub muted">${pace}</div>
+      </div>
+    </section>
+
+    <section class="card goal">
+      <h2>The numbers</h2>
+      <dl class="figs">
+        <div><dt>Needed at ${esc(v.retireAge)}</dt><dd class="num">${eur(plan.needed)}</dd></div>
+        <div><dt>Same, in ${new Date().getFullYear() + plan.years} euros</dt><dd class="num">${eur(plan.neededFuture)}</dd></div>
+        <div><dt>Counted now (${esc(v.counted.toLowerCase())})</dt><dd class="num">${eur(plan.counted)}</dd></div>
+        <div><dt>At ${esc(v.retireAge)} with no new money</dt><dd class="num">${eur(plan.noNewMoney)}</dd></div>
+      </dl>
+      <p class="small muted" style="margin:6px 0 0">All amounts are in today's money: raise the monthly investment with inflation each year. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
+    </section>`;
+}
+
+function renderRetire(root) {
+  const d = state.data;
+  const r = d.retirement;
+  if (!r.found) {
+    root.innerHTML = `<div class="card"><p class="muted">The sheet has no <strong>Retirement</strong> tab yet. Add one with a Setting and a Value column to plan here.</p></div>`;
+    return;
+  }
+  const show = (f, v) => (f.kind === "pct" ? +(v * 100).toFixed(2) : v);
+  root.innerHTML = `
+    <div id="retireSummary"></div>
+    <section class="card">
+      <h2>Your plan</h2>
+      <form id="retire" novalidate>
+        <label class="field">Portfolio counted
+          <select name="counted">${COUNTED_OPTIONS.map((o) => `<option ${o === r.values.counted ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
+        </label>
+        <p class="small muted" style="margin:-8px 0 0">Liquid is cash, stocks and III pillar. Options adds Vinted options. Total adds real estate.</p>
+        <div class="two">
+          ${RETIRE_FIELDS.map((f) => `<label class="field">${esc(f.label)}<input name="${f.key}" inputmode="decimal" autocomplete="off" value="${esc(show(f, r.values[f.key]))}"></label>`).join("")}
+        </div>
+        <ul class="errors" id="retireErrors"></ul>
+        <button class="btn" id="retireSave">Save to sheet</button>
+      </form>
+    </section>`;
+
+  const form = $("#retire");
+  const read = () => {
+    const f = new FormData(form);
+    const v = { ...r.values, counted: f.get("counted") };
+    const errors = [];
+    for (const field of RETIRE_FIELDS) {
+      const raw = String(f.get(field.key) ?? "").trim().replace(",", ".");
+      const n = num(raw);
+      if (n === null) errors.push(`${field.label}: enter a number.`);
+      else v[field.key] = field.kind === "pct" ? n / 100 : n;
+    }
+    if (!errors.length) {
+      if (!(v.currentAge < v.retireAge)) errors.push("Retirement age must be after your current age.");
+      if (!(v.retireAge < v.endAge)) errors.push("Plan until age must be after the retirement age.");
+      if (v.spend < 0 || v.pension < 0 || v.monthly < 0) errors.push("Amounts can't be negative.");
+    }
+    return { v, errors };
+  };
+  const sync = () => {
+    const { v, errors } = read();
+    if (!errors.length) $("#retireSummary").innerHTML = retireSummary(v, retirementPlan(v, countedValue(d.accounts, v.counted)));
+    $("#retireErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+    return { v, errors };
+  };
+  form.addEventListener("input", sync);
+  form.addEventListener("change", sync);
+  sync();
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const { v, errors } = sync();
+    if (errors.length) return;
+    const missing = Object.keys(v).filter((k) => !r.rows[k]);
+    const btn = $("#retireSave");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const data = Object.entries(r.rows).map(([k, row]) => {
+        const field = RETIRE_FIELDS.find((f) => f.key === k);
+        const value = field?.kind === "pct" ? `${+(v[k] * 100).toFixed(4)}%` : v[k];
+        return { range: `Retirement!B${row}`, values: [[value]] };
+      });
+      await sheets.write(data);
+      showBanner(`Saved your plan to the Retirement tab.${missing.length ? ` Not saved (no row in the sheet): ${esc(missing.join(", "))}.` : ""}`, "ok");
+      await load({ quiet: true });
+    } catch (err) {
+      if (err instanceof AuthError) needSignIn();
+      else showBanner(esc(err.message || String(err)), "error");
+      btn.disabled = false;
+      btn.textContent = "Save to sheet";
+    }
+  };
 }
 
 // ---------- add transaction ----------
@@ -600,6 +774,7 @@ function boot() {
     if (b) go(b.dataset.view);
   });
   $("#refresh").addEventListener("click", () => (getToken() ? load() : signIn(clientId())));
+  window.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("online", () => getToken() && load({ quiet: true }));
   document.addEventListener("visibilitychange", () => {
     // Refresh when the app comes back to the foreground after a while.

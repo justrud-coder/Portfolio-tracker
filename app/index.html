@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Portfolio</title>
     <meta name="description" content="Personal portfolio tracker backed by Google Sheets" />
-    <meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -19,11 +19,11 @@
   </head>
   <body>
     <header class="top">
-      <h1 id="title">Portfolio</h1>
+      <h1 id="title"></h1>
       <div class="top-actions">
         <span id="status" class="muted small" aria-live="polite"></span>
         <button id="refresh" class="icon-btn" aria-label="Refresh" title="Refresh">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
     </header>
@@ -42,6 +42,10 @@
       <button data-view="goals">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="0.5" /></svg>
         <span>Goals</span>
+      </button>
+      <button data-view="retire">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 20c0-4 3-7 7-7s7 3 7 7M12 13V4M12 4l5 3-5 3" /></svg>
+        <span>Retirement</span>
       </button>
       <button data-view="add">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>

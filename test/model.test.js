@@ -136,6 +136,63 @@ test("priceUpdates writes price and date for yahoo rows only", () => {
   ]);
 });
 
+import { countedValue, parseRetirement, retirementPlan } from "../app/js/model.js";
+
+const RETIREMENT = [
+  ["Setting", "Value", "Notes"],
+  ["Current age", 43],
+  ["Retirement age", 50],
+  ["Plan until age", 85],
+  ["Monthly spend in retirement (EUR)", 3000],
+  ["Public pension per month (EUR)", 600],
+  ["Public pension from age", 65],
+  ["Real return before retirement", 0.04],
+  ["Real return in retirement", 0.03],
+  ["Inflation", 0.025],
+  ["Portfolio counted", "Liquid"],
+  ["Monthly investment now (EUR)", 1250],
+  [],
+  ["Result", "Value"],
+];
+
+test("parseRetirement finds inputs by label and keeps their rows", () => {
+  const r = parseRetirement(RETIREMENT);
+  assert.equal(r.values.retireAge, 50);
+  assert.equal(r.values.returnPost, 0.03);
+  assert.equal(r.values.counted, "Liquid");
+  assert.equal(r.rows.monthly, 12);
+  assert.equal(parseRetirement([]).found, false);
+});
+
+test("retirementPlan matches the Retirement tab formulas", () => {
+  const { values } = parseRetirement(RETIREMENT);
+  const p = retirementPlan(values, 116283);
+  // Values the sheet computed for the same inputs.
+  assert.equal(Math.round(p.needed), 716186);
+  assert.equal(Math.round(p.neededFuture), 851320);
+  assert.equal(Math.round(p.noNewMoney), 153020);
+  assert.equal(Math.round(p.perMonth), 5836);
+  assert.equal(Math.round(p.projected), 273652);
+  assert.equal(Math.round(p.supportedSpend), 1311);
+  assert.equal(Math.round(p.todaySpend), 599);
+  assert.equal(p.status, "Behind");
+  assert.ok(p.earliestAge > 50);
+});
+
+test("retirementPlan status bands", () => {
+  const { values } = parseRetirement(RETIREMENT);
+  assert.equal(retirementPlan({ ...values, monthly: 5836 }, 116283).status, "On track");
+  assert.equal(retirementPlan({ ...values, monthly: 7000 }, 116283).status, "Ahead");
+  assert.equal(retirementPlan(values, 900000).status, "Ahead");
+});
+
+test("countedValue picks liquid, options or total", () => {
+  const accounts = parseAccounts(ACCOUNTS);
+  assert.equal(countedValue(accounts, "Liquid"), 36944 + 13039);
+  assert.equal(countedValue(accounts, "Liquid + options"), 36944 + 13039 + 58303);
+  assert.equal(countedValue(accounts, "Total"), 36944 + 13039 + 58303);
+});
+
 test("credentials accepts the private key however it was pasted", async () => {
   const { generateKeyPairSync, createPrivateKey } = await import("node:crypto");
   const { credentials } = await import("../scripts/update-prices.mjs");
