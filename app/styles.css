@@ -238,6 +238,14 @@ main { padding: 0 20px 32px; max-width: 720px; margin: 0 auto; outline: none; }
 .bar-row .bar-top span:last-child { color: var(--muted); font-weight: 500; }
 .bar-track { height: 8px; background: var(--bar-track); border-radius: 999px; margin-top: 8px; overflow: hidden; }
 .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--bar)); border-radius: 999px; }
+.donut { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: center; }
+.donut svg { width: 120px; height: 120px; display: block; }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.legend li { display: grid; grid-template-columns: 12px 1fr auto; column-gap: 10px; align-items: center; font-size: 15px; font-weight: 600; }
+.legend .swatch { width: 12px; height: 12px; border-radius: 50%; }
+.legend .share { font-weight: 700; font-variant-numeric: tabular-nums; }
+.legend .amt { grid-column: 2 / -1; font-size: 13px; font-weight: 500; color: var(--muted); }
+@media (max-width: 340px) { .donut { grid-template-columns: 1fr; justify-items: center; } .legend { width: 100%; } }
 
 /* Lists inside cards */
 .card:has(> .list) { padding-bottom: 6px; }
@@ -419,7 +427,7 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
 .privacy #privacy { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); }
 .privacy #privacy .eye-open { display: none; }
 .privacy #privacy .eye-closed { display: inline; }
-.privacy .num, .privacy .chart, .privacy .figs dd, .privacy .meta, .privacy .preview,
+.privacy .num, .privacy .chart, .privacy .donut svg, .privacy .figs dd, .privacy .meta, .privacy .preview,
 .privacy .banner, .privacy .total-line, .privacy .stat .value, .privacy .stat .sub,
 .privacy input:not([type="radio"]):not([type="date"]) {
   filter: blur(9px); transition: filter 0.2s;

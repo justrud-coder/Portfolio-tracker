@@ -37,7 +37,7 @@ const RANGES = {
   holdings: "Holdings!A1:M300",
   monthly: "Monthly!A1:Z2000",
   lists: "Lists!A1:J60",
-  history: "History!A1:D10000",
+  history: "History!A:D",
   transactions: "Transactions!A1:I10000",
 };
 // Read on its own so a sheet without a Retirement tab still loads.
@@ -291,12 +291,6 @@ function renderHome(root) {
         <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
       </div>`;
 
-  const gainTile =
-    s.gain === null
-      ? `<div class="value muted">–</div><div class="sub muted">Add BUY transactions with prices to see this.</div>`
-      : `<div class="value num ${tone(s.gain)}">${signedEur(s.gain)}</div>
-         <div class="sub"><span class="${tone(s.gain)} num">${signedPct(s.gainPct)}</span> <span class="muted">on ${eur(s.invested)} invested</span></div>`;
-
   root.innerHTML = `
     <section class="card hero">
       <div class="label">Total value</div>
@@ -307,10 +301,6 @@ function renderHome(root) {
     <section class="stats">
       ${changeTile("Last month", changes.month, "since")}
       ${changeTile("This year", changes.ytd, "since")}
-      <div class="card stat wide">
-        <div class="label">Gain vs cost</div>
-        ${gainTile}
-      </div>
     </section>
 
     <section class="card">
@@ -325,7 +315,7 @@ function renderHome(root) {
 
     <section class="card">
       <h2>Allocation</h2>
-      <div class="bars">${bars(s.allocation)}</div>
+      ${donut(s.allocation)}
     </section>
 
     ${groupAccounts(d.accounts)
@@ -365,17 +355,35 @@ function renderHome(root) {
   };
 }
 
-function bars(items) {
-  const max = Math.max(...items.map((i) => i.value), 1);
-  return items
-    .map(
-      (i) => `
-    <div class="bar-row">
-      <div class="bar-top"><span>${esc(i.name)}</span><span class="num">${eur(i.value)} · ${pct(i.share)}</span></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, (i.value / max) * 100).toFixed(1)}%"></div></div>
-    </div>`,
-    )
+// Fixed colours per group, readable on light and dark backgrounds.
+const GROUP_COLORS = { Stocks: "#0a84ff", Cash: "#30b158", "Real estate": "#ff9f0a", Options: "#bf5af2", Pension: "#40c8e0" };
+const SPARE_COLORS = ["#ff6482", "#8e8e93", "#ac8e68", "#64d2ff"];
+
+/** Donut of each group's share of the total, with a legend. */
+function donut(items) {
+  const shown = items.filter((i) => i.value > 0);
+  const total = shown.reduce((s, i) => s + i.value, 0);
+  if (!total) return `<p class="muted">Nothing to show yet.</p>`;
+  let spare = 0;
+  const colored = shown.map((i) => ({ ...i, color: GROUP_COLORS[i.name] ?? SPARE_COLORS[spare++ % SPARE_COLORS.length] }));
+  const r = 15.9155; // circumference 100, so dash lengths are percentages
+  let offset = 25; // start at 12 o'clock
+  const arcs = colored
+    .map((i) => {
+      const len = (i.value / total) * 100;
+      const gap = colored.length > 1 ? Math.min(0.6, len / 2) : 0;
+      const arc = `<circle r="${r}" cx="21" cy="21" fill="none" stroke="${i.color}" stroke-width="6" stroke-dasharray="${(len - gap).toFixed(3)} ${(100 - len + gap).toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"><title>${esc(i.name)} ${pct(i.value / total)}</title></circle>`;
+      offset -= len;
+      return arc;
+    })
     .join("");
+  return `
+    <div class="donut">
+      <svg viewBox="0 0 42 42" role="img" aria-label="Share by asset class">${arcs}</svg>
+      <ul class="legend">${colored
+        .map((i) => `<li><span class="swatch" style="background:${i.color}"></span><span class="name">${esc(i.name)}</span><span class="share">${pct(i.value / total)}</span><span class="amt num">${eur(i.value)}</span></li>`)
+        .join("")}</ul>
+    </div>`;
 }
 
 function accountsList(d, accounts) {

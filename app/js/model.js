@@ -237,29 +237,48 @@ export function addMonths(iso, n) {
   return first.toISOString().slice(0, 10);
 }
 
+const dayNumber = (iso) => Date.parse(`${iso}T00:00:00Z`) / 86400000;
+
 /**
- * Change of `total` since a baseline snapshot: the last one on or before
- * `fromDate`, or (when `fallbackFirstAfter`) the first one after it.
+ * Change of `total` since the snapshot closest to `target` (either side),
+ * ignoring snapshots from `today` on. Ties go to the earlier snapshot.
  */
-function changeFrom(monthly, total, fromDate, fallbackFirstAfter = false) {
+function changeNear(monthly, total, target, today) {
   let base = null;
-  for (const m of monthly) if (m.date <= fromDate) base = m;
-  if (!base && fallbackFirstAfter) base = monthly.find((m) => m.date > fromDate) ?? null;
+  for (const m of monthly) {
+    if (m.date >= today) continue;
+    if (!base || Math.abs(dayNumber(m.date) - dayNumber(target)) < Math.abs(dayNumber(base.date) - dayNumber(target))) base = m;
+  }
+  if (!base) return { value: null, pct: null, from: null };
+  const value = total - base.total;
+  return { value, pct: base.total ? value / base.total : null, from: base.date };
+}
+
+/** Last day of the month before `iso`'s month. */
+export function endOfPreviousMonth(iso) {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+}
+
+/** Change of `total` since the last snapshot on or before `date`. */
+function changeSince(monthly, total, date) {
+  let base = null;
+  for (const m of monthly) if (m.date <= date) base = m;
   if (!base) return { value: null, pct: null, from: null };
   const value = total - base.total;
   return { value, pct: base.total ? value / base.total : null, from: base.date };
 }
 
 /**
- * Change over the last month (against the latest snapshot at least a month old)
- * and year to date (against the last snapshot of the previous year, or the
- * year's first snapshot when there is none).
+ * Change this month (against the last snapshot on or before the last day of
+ * the previous month) and year to date (against the snapshot closest to
+ * 31 December of the previous year, since older history isn't daily).
  */
 export function periodChanges(monthly, total, today) {
-  const year = today.slice(0, 4);
+  const year = Number(today.slice(0, 4));
   return {
-    month: changeFrom(monthly, total, addMonths(today, -1)),
-    ytd: changeFrom(monthly, total, `${Number(year) - 1}-12-31`, true),
+    month: changeSince(monthly, total, endOfPreviousMonth(today)),
+    ytd: changeNear(monthly, total, `${year - 1}-12-31`, today),
   };
 }
 
