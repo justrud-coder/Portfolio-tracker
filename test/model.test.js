@@ -189,6 +189,9 @@ test("parseRetirement finds inputs by label and keeps their rows", () => {
   assert.equal(r.rows.monthly, 12);
   assert.equal(parseRetirement([]).found, false);
   assert.equal(parseRetirement([["Setting"], ["Real return after retirement", 0.02]]).values.returnPost, 0.02);
+  const renamed = parseRetirement([["Setting"], ["Real return before pension", 0.05], ["Real return after pension", 0.01]]).values;
+  assert.equal(renamed.returnPre, 0.05);
+  assert.equal(renamed.returnPost, 0.01);
 });
 
 test("retirementPlan matches the Retirement tab formulas", () => {

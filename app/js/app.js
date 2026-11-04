@@ -414,8 +414,8 @@ const RETIRE_FIELDS = [
   { key: "spend", label: "Spend (€/month)", kind: "eur" },
   { key: "pension", label: "Pension (€/month)", kind: "eur" },
   { key: "monthly", label: "Investing (€/month)", kind: "eur" },
-  { key: "returnPre", label: "Real return before retirement (%)", kind: "pct" },
-  { key: "returnPost", label: "Real return after retirement (%)", kind: "pct" },
+  { key: "returnPre", label: "Real return before pension (%)", kind: "pct" },
+  { key: "returnPost", label: "Real return after pension (%)", kind: "pct" },
   { key: "inflation", label: "Inflation (%)", kind: "pct" },
 ];
 
