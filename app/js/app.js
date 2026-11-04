@@ -413,7 +413,7 @@ const RETIRE_FIELDS = [
   { key: "pensionAge", label: "Pension from age", kind: "age" },
   { key: "spend", label: "Spend (€/month, today's value)", kind: "eur" },
   { key: "pension", label: "Pension (€/month, today's value)", kind: "eur" },
-  { key: "monthly", label: "Investing (€/month, today's value)", kind: "eur" },
+  { key: "monthly", label: "Investing (€/month)", kind: "eur" },
   { key: "returnPre", label: "Real return before pension (%)", kind: "pct" },
   { key: "returnPost", label: "Real return after pension (%)", kind: "pct" },
   { key: "inflation", label: "Inflation (%)", kind: "pct" },
@@ -448,7 +448,7 @@ function retireSummary(v, plan) {
       <div class="card stat">
         <div class="label">Invest per month</div>
         <div class="value num">${plan.perMonth === null ? "–" : eur(plan.perMonth)}</div>
-        <div class="sub muted">from now to ${esc(v.retireAge)} to hit the target</div>
+        <div class="sub muted">fixed, from now to ${esc(v.retireAge)} to hit the target</div>
       </div>
       <div class="card stat">
         <div class="label">If you retired today</div>
@@ -477,7 +477,7 @@ function retireSummary(v, plan) {
         <div><dt>Counted now (${esc(v.counted.toLowerCase())})</dt><dd class="num">${eur(plan.counted)}</dd></div>
         <div><dt>At ${esc(v.retireAge)} with no new money</dt><dd class="num">${eur(plan.noNewMoney)}</dd></div>
       </dl>
-      <p class="small muted" style="margin:6px 0 0">All amounts are in today's money: raise the monthly investment with inflation each year. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
+      <p class="small muted" style="margin:6px 0 0">All amounts are in today's money, except the monthly investment, which is a fixed amount. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
     </section>`;
 }
 

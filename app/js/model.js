@@ -644,12 +644,18 @@ export function spendFrom(p, value, age) {
   return f.spend ? (value + p.pension * f.pension) / f.spend : null;
 }
 
-/** Value after `months` of growth at the pre-retirement return with `perMonth` added at each month end. */
+/**
+ * Value in today's money after `months` of growth at the pre-retirement return,
+ * with a fixed `perMonth` (not raised with inflation) added at each month end.
+ */
 function grow(p, start, perMonth, months) {
-  const i = monthly(p.returnPre);
+  const i = nominalMonthly(p);
   const g = (1 + i) ** months;
-  return start * g + perMonth * (i === 0 ? months : (g - 1) / i);
+  return (start * g + perMonth * (i === 0 ? months : (g - 1) / i)) / (1 + p.inflation) ** (months / 12);
 }
+
+/** Monthly nominal return before retirement: real return plus inflation. */
+const nominalMonthly = (p) => ((1 + p.returnPre) * (1 + p.inflation)) ** (1 / 12) - 1;
 
 /**
  * The whole plan, in today's money. Matches the formulas on the Retirement tab.
@@ -659,10 +665,14 @@ export function retirementPlan(p, counted) {
   const years = Math.max(0, p.retireAge - p.currentAge);
   const months = years * 12;
   const needed = neededAt(p, p.retireAge);
-  const i = monthly(p.returnPre);
+  const noNewMoney = counted * (1 + monthly(p.returnPre)) ** months;
+  // A fixed monthly amount: grow it in nominal euros, then compare with the
+  // target in the euros of the retirement year.
+  const i = nominalMonthly(p);
   const g = (1 + i) ** months;
-  const noNewMoney = counted * g;
-  const perMonth = months === 0 ? (needed > counted ? null : 0) : Math.max(0, (needed - noNewMoney) / (i === 0 ? months : (g - 1) / i));
+  const neededNominal = needed * (1 + p.inflation) ** years;
+  const perMonth =
+    months === 0 ? (needed > counted ? null : 0) : Math.max(0, (neededNominal - counted * g) / (i === 0 ? months : (g - 1) / i));
   const projected = grow(p, counted, p.monthly, months);
   let status = "Behind";
   if (perMonth === 0 || (perMonth !== null && p.monthly >= perMonth * 1.1)) status = "Ahead";
