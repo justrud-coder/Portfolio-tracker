@@ -2,7 +2,13 @@ import { CONFIG } from "../config.js";
 import { AuthError, Sheets, getToken, handleRedirect, signIn, signOut } from "./google.js";
 import {
   COUNTED_OPTIONS,
-  TX_TYPES,
+  BROKER,
+  BROKER_CASH,
+  PENSION,
+  OPTIONS,
+  fundSymbol,
+  holdingsRow,
+  nextHoldingsRow,
   countedValue,
   nextFreeRow,
   parseRetirement,
@@ -533,11 +539,29 @@ function renderRetire(root) {
 
 // ---------- add transaction ----------
 
+const TX_MODES = [
+  ["BUY", "Buy"],
+  ["SELL", "Sell"],
+  ["DEPOSIT", "Deposit"],
+  ["WITHDRAWAL", "Withdraw"],
+  ["PENSION", "III pillar"],
+  ["OPTIONS", "Options"],
+];
+const NEW_FUND = "__new";
+
 function renderAdd(root) {
   const d = state.data;
-  const accounts = d.accounts.filter((a) => a.active).map((a) => a.name);
-  const types = d.lists["Transaction type"]?.length ? d.lists["Transaction type"] : TX_TYPES;
+  // Deposits and withdrawals: the active cash accounts, plus cash held at IBKR.
+  const cashAccounts = [
+    ...d.accounts.filter((a) => a.active && a.assetClass === "Cash").map((a) => ({ value: a.name, label: a.name })),
+    { value: BROKER, label: "IBKR cash" },
+  ];
+  const stocks = d.holdings.filter((h) => h.position === BROKER && h.symbol !== BROKER_CASH);
+  const brokerCash = d.holdings.find((h) => h.position === BROKER && h.symbol === BROKER_CASH);
+  const funds = d.holdings.filter((h) => h.position === PENSION);
+  const options = d.holdings.find((h) => h.position === OPTIONS);
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
+  const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
   const recent = d.transactions.slice(-8).reverse();
 
   root.innerHTML = `
@@ -545,22 +569,34 @@ function renderAdd(root) {
       <h2>Add a transaction</h2>
       <form id="tx" novalidate>
         <div class="type-pick" role="radiogroup" aria-label="Type">
-          ${types.map((t) => `<label><input type="radio" name="type" value="${esc(t)}" ${t === (last.type || "BUY") ? "checked" : ""}><span>${esc(t[0] + t.slice(1).toLowerCase())}</span></label>`).join("")}
+          ${TX_MODES.map(([m, label]) => `<label><input type="radio" name="type" value="${m}" ${m === mode ? "checked" : ""}><span>${label}</span></label>`).join("")}
         </div>
-        <div class="two">
-          <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
-          <label class="field">Account
-            <select name="account">${accounts.map((a) => `<option ${a === last.account ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
-          </label>
-        </div>
-        <label class="field" data-for="symbol">Symbol<input name="symbol" list="symbols" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. VWCE.DE"></label>
-        <datalist id="symbols"></datalist>
+        <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
         <div class="two" data-for="trade">
+          <label class="field">Account<span class="static">IBKR</span></label>
+          <label class="field">Symbol<input name="symbol" list="symbols" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. VWCE.DE"></label>
+          <datalist id="symbols">${stocks.map((h) => `<option value="${esc(h.symbol)}">${esc(h.name)}</option>`).join("")}</datalist>
           <label class="field">Units<input name="units" inputmode="decimal" autocomplete="off"></label>
           <label class="field">Price per unit (€)<input name="price" inputmode="decimal" autocomplete="off"></label>
         </div>
-        <label class="field" data-for="cash">Amount (€)<input name="cash" inputmode="decimal" autocomplete="off"></label>
-        <label class="field">Fees (€)<input name="fees" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+        <div class="two" data-for="cash">
+          <label class="field">Account
+            <select name="account">${cashAccounts.map((a) => `<option value="${esc(a.value)}" ${a.value === last.account ? "selected" : ""}>${esc(a.label)}</option>`).join("")}</select>
+          </label>
+          <label class="field">Amount (€)<input name="cash" inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <div class="two" data-for="pension">
+          <label class="field">Fund
+            <select name="fund">${funds.map((h) => `<option value="${esc(h.symbol)}" ${h.symbol === last.fund ? "selected" : ""}>${esc(h.name || h.symbol)}</option>`).join("")}<option value="${NEW_FUND}" ${funds.length ? "" : "selected"}>New fund…</option></select>
+          </label>
+          <label class="field" data-for="newfund">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
+          <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
+          <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <div class="two" data-for="options">
+          <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
+          <label class="field">Value per option (€)<input name="optionValue" inputmode="decimal" autocomplete="off" value="${options?.price ?? ""}"></label>
+        </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
         <ul class="errors" id="txErrors"></ul>
@@ -606,16 +642,32 @@ function renderAdd(root) {
     const f = new FormData(form);
     const type = f.get("type");
     const trade = type === "BUY" || type === "SELL";
+    const pension = type === "PENSION";
     form.querySelector('[data-for="trade"]').hidden = !trade;
-    form.querySelector('[data-for="cash"]').hidden = trade;
-    form.querySelector('[data-for="symbol"]').hidden = !(trade || type === "DIVIDEND");
-    const symbols = [...new Set(d.holdings.filter((h) => h.position === f.get("account")).map((h) => h.symbol))];
-    $("#symbols").innerHTML = symbols.map((s) => `<option value="${esc(s)}">`).join("");
-    const units = num(f.get("units"));
-    const price = num(f.get("price"));
-    const fees = num(f.get("fees")) ?? 0;
-    $("#txPreview").textContent =
-      trade && units && price ? `Total ${eurCents(type === "BUY" ? units * price + fees : units * price - fees)}` : "";
+    const opts = type === "OPTIONS";
+    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts;
+    form.querySelector('[data-for="pension"]').hidden = !pension;
+    form.querySelector('[data-for="options"]').hidden = !opts;
+    form.querySelector('[data-for="newfund"]').hidden = f.get("fund") !== NEW_FUND;
+    let msg = "";
+    if (trade) {
+      const units = num(f.get("units"));
+      const price = num(f.get("price"));
+      const have = brokerCash?.value ?? 0;
+      if (units && price) {
+        const total = units * price;
+        msg = `Total ${eurCents(total)}. ${type === "BUY" ? `Paid from IBKR cash (${eurCents(have)} now, ${eurCents(have - total)} after).` : `Paid into IBKR cash (${eurCents(have + total)} after).`}`;
+      }
+    } else if (pension) {
+      const units = num(f.get("pensionUnits"));
+      const cash = num(f.get("pensionCash"));
+      if (units && cash) msg = `Unit price ${(cash / units).toLocaleString("en-IE", { maximumFractionDigits: 4 })} €. It becomes the fund's latest price.`;
+    } else if (opts && options) {
+      const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
+      const value = num(f.get("optionValue")) ?? options.price ?? 0;
+      msg = `${num(total.toFixed(4))} options × ${eurCents(value)} = ${eurCents(total * value)}.`;
+    }
+    $("#txPreview").textContent = msg;
   };
   form.addEventListener("input", sync);
   form.addEventListener("change", sync);
@@ -624,16 +676,28 @@ function renderAdd(root) {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(form));
-    const { row, errors } = transactionRow(f);
+    if (f.type === "OPTIONS") return saveOptionsForm(f, options);
+    const pension = f.type === "PENSION";
+    const newFund = pension && f.fund === NEW_FUND;
+    const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
+    const { row, errors } = transactionRow(input);
     $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
     if (!row) return;
     const btn = $("#txSave");
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      await saveTransaction(row);
-      ls.set("pt.lastTx", JSON.stringify({ type: f.type, account: f.account }));
-      showBanner(`Saved ${esc(row[2].toLowerCase())}${row[3] ? ` ${esc(row[3])}` : ""} on ${esc(row[1])}.`, "ok");
+      let what;
+      if (pension) {
+        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null);
+        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        ls.set("pt.lastTx", JSON.stringify({ type: f.type, fund: fund.symbol }));
+      } else {
+        await saveTransaction(row);
+        what = `${esc(row[2].toLowerCase())}${row[3] && row[3] !== BROKER_CASH ? ` ${esc(row[3])}` : ""} on ${esc(row[1] === BROKER && row[3] === BROKER_CASH ? "IBKR cash" : row[1])}`;
+        ls.set("pt.lastTx", JSON.stringify({ type: f.type, account: f.account }));
+      }
+      showBanner(`Saved ${what}.`, "ok");
       await load({ quiet: true });
     } catch (err) {
       if (err instanceof AuthError) needSignIn();
@@ -658,6 +722,83 @@ async function saveTransaction(row) {
   if (!tab) throw new Error("The sheet has no Transactions tab.");
   await sheets.ensureRows(tab, n);
   await sheets.write([{ range: `Transactions!A${n}:I${n}`, values: [row] }]);
+}
+
+/**
+ * Save III pillar units. A new fund gets its own Holdings row first. The unit
+ * price paid becomes the fund's latest price unless a newer one is already set.
+ */
+async function savePension(row, newFundName) {
+  const [holdings] = await sheets.batchGet([RANGES.holdings]);
+  const meta = await freshMeta();
+  const date = row[0];
+  const price = row[5];
+  let fund;
+  if (newFundName) {
+    const tab = meta.tabs.Holdings;
+    if (!tab) throw new Error("The sheet has no Holdings tab.");
+    const symbol = fundSymbol(newFundName, holdings.slice(1).map((r) => r?.[1] ?? ""));
+    const r = nextHoldingsRow(holdings);
+    await sheets.ensureRows(tab, r);
+    const values = holdingsRow(r, { position: PENSION, symbol, name: newFundName, price, priceDate: date });
+    await sheets.write([{ range: `Holdings!A${r}:M${r}`, values: [values] }]);
+    fund = { symbol, name: newFundName };
+  } else {
+    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === row[3]);
+    if (i < 0) throw new Error(`The fund ${row[3]} isn't on the Holdings tab any more. Refresh and try again.`);
+    const r = i + 1;
+    fund = { symbol: row[3], name: holdings[i][2] || row[3] };
+    const known = serialToIso(holdings[i][7]);
+    if (!known || date >= known) {
+      await sheets.write([{ range: `Holdings!F${r}`, values: [[price]] }, { range: `Holdings!H${r}`, values: [[date]] }]);
+    }
+  }
+  await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
+  return fund;
+}
+
+/** Options tab of the form: add options received and/or set the value per option. */
+async function saveOptionsForm(f, options) {
+  const units = String(f.optionUnits ?? "").trim();
+  const value = num(String(f.optionValue ?? "").replace(",", "."));
+  const errors = [];
+  if (!options) errors.push("The sheet has no Vinted options position on the Holdings tab.");
+  if (!units && value === null) errors.push("Enter the options received, the value per option, or both.");
+  if (String(f.optionValue ?? "").trim() && !(value > 0)) errors.push("Value per option must be more than 0.");
+  let row = null;
+  if (units && options) {
+    const r = transactionRow({ ...f, symbol: options.symbol, units });
+    errors.push(...r.errors);
+    row = r.row;
+  }
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const done = [];
+    if (value !== null && value !== options.price) {
+      // Re-read so the right Holdings row is written even if rows moved.
+      const [holdings] = await sheets.batchGet([RANGES.holdings]);
+      const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === OPTIONS && r?.[1] === options.symbol);
+      if (i < 0) throw new Error("The Vinted options row moved on the Holdings tab. Refresh and try again.");
+      await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
+      done.push(`value ${eurCents(value)} per option`);
+    }
+    if (row) {
+      await saveTransaction(row);
+      done.push(`${num(row[4])} new options`);
+    }
+    ls.set("pt.lastTx", JSON.stringify({ type: "OPTIONS" }));
+    showBanner(done.length ? `Saved ${esc(done.join(" and "))}.` : "Nothing changed.", "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
 }
 
 async function deleteTransaction(t) {

@@ -87,17 +87,43 @@ test("parseHoldings and parseGoals", () => {
   assert.equal(g[0].perMonth, 2684);
 });
 
-test("transactionRow builds trade and cash rows and validates", () => {
-  const buy = transactionRow({ date: "2026-11-04", account: "IBKR", type: "BUY", symbol: " VWCE.DE ", units: "2", price: "169.5", fees: "1.25", note: "" });
-  assert.deepEqual(buy.row, ["2026-11-04", "IBKR", "BUY", "VWCE.DE", 2, 169.5, 1.25, "", ""]);
-  assert.equal(transactionValue(buy.row), 340.25);
+test("transactionRow builds IBKR trades, cash moves and III pillar units", () => {
+  const buy = transactionRow({ date: "2026-11-04", account: "Cash", type: "BUY", symbol: " vwce.de ", units: "2", price: "169.5", fees: "1.25", note: "" });
+  assert.deepEqual(buy.row, ["2026-11-04", "IBKR", "BUY", "VWCE.DE", 2, 169.5, "", "", ""]);
+  assert.equal(transactionValue(buy.row), 339);
 
-  const dep = transactionRow({ date: "2026-11-04", account: "IBKR", type: "DEPOSIT", cash: "500", units: "9", price: "9" });
-  assert.deepEqual(dep.row, ["2026-11-04", "IBKR", "DEPOSIT", "", "", "", "", 500, ""]);
+  const dep = transactionRow({ date: "2026-11-04", account: "Cash", type: "DEPOSIT", cash: "500", units: "9", price: "9" });
+  assert.deepEqual(dep.row, ["2026-11-04", "Cash", "DEPOSIT", "", "", "", "", 500, ""]);
+  const ibkr = transactionRow({ date: "2026-11-04", account: "IBKR", type: "WITHDRAWAL", cash: "250" });
+  assert.deepEqual(ibkr.row, ["2026-11-04", "IBKR", "WITHDRAWAL", "CASH", "", "", "", 250, ""]);
 
-  const bad = transactionRow({ date: "", account: "IBKR", type: "BUY", units: "0" });
+  const pen = transactionRow({ date: "2026-11-04", type: "PENSION", fund: "ARTEA-AA16", units: "142.17", cash: "100" });
+  assert.deepEqual(pen.row, ["2026-11-04", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.703383, "", "", ""]);
+
+  const opt = transactionRow({ date: "2026-12-01", type: "OPTIONS", symbol: "VINTED", units: "40" });
+  assert.deepEqual(opt.row, ["2026-12-01", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""]);
+  assert.equal(transactionRow({ date: "2026-12-01", type: "OPTIONS", symbol: "VINTED", units: "" }).row, undefined);
+
+  assert.ok(transactionRow({ date: "2026-11-04", type: "BUY", symbol: "cash", units: "1", price: "1" }).errors.some((e) => /Deposit/.test(e)));
+  assert.equal(transactionRow({ date: "2026-11-04", type: "DIVIDEND", cash: "5" }).row, undefined);
+  const bad = transactionRow({ date: "", type: "BUY", units: "0" });
   assert.equal(bad.row, undefined);
   assert.ok(bad.errors.length >= 3);
+});
+
+test("new III pillar funds get a unique symbol and the sheet's Holdings formulas", async () => {
+  const { fundSymbol, holdingsRow, nextHoldingsRow } = await import("../app/js/model.js");
+  assert.equal(fundSymbol("Luminor pensija 1 – tvari ateitis", []), "LUMINOR-PENSIJA-1-TVARI");
+  assert.equal(fundSymbol("Artea", ["ARTEA", "artea-2"]), "ARTEA-3");
+  assert.equal(fundSymbol("  ", []), "FUND");
+  assert.equal(nextHoldingsRow([["Position", "Symbol"], ["IBKR", "VWCE.DE"], ["", ""], ["X", "Y"]]), 3);
+  assert.equal(nextHoldingsRow([["Position", "Symbol"], ["IBKR", "VWCE.DE"]]), 3);
+  const row = holdingsRow(6, { position: "III pillar", symbol: "ARTEA-AA16", name: "Artea", price: 0.7034, priceDate: "2026-06-30" });
+  // Formulas as they are on the sheet's Holdings row 6.
+  assert.equal(row[3], '=IF($B6="","",SUMIFS(Transactions!$E:$E,Transactions!$B:$B,$A6,Transactions!$D:$D,$B6,Transactions!$C:$C,"BUY")-SUMIFS(Transactions!$E:$E,Transactions!$B:$B,$A6,Transactions!$D:$D,$B6,Transactions!$C:$C,"SELL"))');
+  assert.equal(row[9], '=IF($B6="","",LET(u,SUMIFS(Transactions!$E:$E,Transactions!$B:$B,$A6,Transactions!$D:$D,$B6,Transactions!$C:$C,"BUY"),c,SUMIFS(Transactions!$J:$J,Transactions!$B:$B,$A6,Transactions!$D:$D,$B6,Transactions!$C:$C,"BUY"),IF(OR(u=0,c=0),"",c/u)))');
+  assert.deepEqual(row.slice(4, 8), ["manual", 0.7034, "EUR", "2026-06-30"]);
+  assert.equal(row.length, 13);
 });
 
 test("nextFreeRow finds the row after the last filled one", () => {

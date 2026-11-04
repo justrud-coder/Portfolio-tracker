@@ -277,46 +277,110 @@ export function summarize(accounts, monthly) {
   };
 }
 
-export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL", "DIVIDEND", "FEE"];
+export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL"];
+/** Account that holds stocks and IBKR cash, and the symbol of that cash. */
+export const BROKER = "IBKR";
+export const BROKER_CASH = "CASH";
+/** Account that holds the III pillar pension funds. */
+export const PENSION = "III pillar";
+/** Account that holds the Vinted share options (units x value per option). */
+export const OPTIONS = "Vinted options";
 
 /**
  * Validate a transaction form and return the A:I row for the Transactions tab:
  * Date, Account, Type, Symbol, Units, Price (EUR), Fees (EUR), Cash amount (EUR), Note.
+ *
+ * Types:
+ * - BUY / SELL: stocks at IBKR (paid from / paid into IBKR cash on the sheet).
+ * - DEPOSIT / WITHDRAWAL: a cash account, or IBKR cash (account "IBKR").
+ * - PENSION: units bought in a III pillar fund, written as a BUY in "III pillar"
+ *   with the unit price worked out from the amount paid.
+ * - OPTIONS: Vinted options received, written as a BUY with no cost.
  */
 export function transactionRow(t) {
   const errors = [];
   const type = String(t.type ?? "").toUpperCase();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
-  if (!t.account) errors.push("Pick an account.");
-  if (!TX_TYPES.includes(type)) errors.push("Pick a type.");
-  const trade = type === "BUY" || type === "SELL";
   const units = num(t.units);
   const price = num(t.price);
-  const fees = num(t.fees);
   const cash = num(t.cash);
-  if (trade) {
-    if (!t.symbol) errors.push("Enter the symbol.");
+  const note = (t.note ?? "").trim();
+  let row = null;
+  if (type === "BUY" || type === "SELL") {
+    const symbol = String(t.symbol ?? "").trim().toUpperCase();
+    if (!symbol) errors.push("Enter the symbol.");
+    else if (symbol === BROKER_CASH) errors.push("Use Deposit or Withdraw for IBKR cash.");
     if (!(units > 0)) errors.push("Units must be more than 0.");
     if (!(price > 0)) errors.push("Price must be more than 0.");
-  } else if (!(cash > 0)) {
-    errors.push("Amount must be more than 0.");
+    row = [t.date, BROKER, type, symbol, units, price, "", "", note];
+  } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
+    if (!t.account) errors.push("Pick an account.");
+    if (!(cash > 0)) errors.push("Amount must be more than 0.");
+    row = [t.date, t.account, type, t.account === BROKER ? BROKER_CASH : "", "", "", "", cash, note];
+  } else if (type === "PENSION") {
+    const fund = String(t.fund ?? "").trim();
+    if (!fund) errors.push("Pick a fund, or enter the new fund's name.");
+    if (!(units > 0)) errors.push("Units must be more than 0.");
+    if (!(cash > 0)) errors.push("Amount paid must be more than 0.");
+    const unitPrice = units > 0 && cash > 0 ? Math.round((cash / units) * 1e6) / 1e6 : "";
+    row = [t.date, PENSION, "BUY", fund, units, unitPrice, "", "", note];
+  } else if (type === "OPTIONS") {
+    const symbol = String(t.symbol ?? "").trim();
+    if (!symbol) errors.push("The sheet has no Vinted options position on the Holdings tab.");
+    if (!(units > 0)) errors.push("Options received must be more than 0.");
+    row = [t.date, OPTIONS, "BUY", symbol, units, "", "", "", note];
+  } else {
+    errors.push("Pick a type.");
   }
-  if (fees !== null && fees < 0) errors.push("Fees can't be negative.");
   if (errors.length) return { errors };
-  return {
-    errors,
-    row: [
-      t.date,
-      t.account,
-      type,
-      trade || type === "DIVIDEND" ? (t.symbol ?? "").trim() : "",
-      trade ? units : "",
-      trade ? price : "",
-      fees ?? "",
-      trade ? "" : cash,
-      (t.note ?? "").trim(),
-    ],
-  };
+  return { errors, row };
+}
+
+/** A short unique symbol for a new fund, made from its name. */
+export function fundSymbol(name, taken = []) {
+  const base =
+    String(name ?? "")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)
+      .replace(/-+$/, "") || "FUND";
+  const used = new Set(taken.map((x) => String(x).toUpperCase()));
+  let sym = base;
+  for (let i = 2; used.has(sym); i++) sym = `${base}-${i}`;
+  return sym;
+}
+
+/** First Holdings row (1-based) with no symbol, after the header. */
+export function nextHoldingsRow(grid) {
+  for (let i = 1; i < grid.length; i++) if (!String(grid[i]?.[1] ?? "").trim()) return i + 1;
+  return Math.max(grid.length, 1) + 1;
+}
+
+/**
+ * A full Holdings row (A:M) for a new position, with the same formulas as the
+ * rows above it: units from Transactions, cost basis, value and gain.
+ */
+export function holdingsRow(r, { position, symbol, name, source = "manual", price = "", currency = "EUR", priceDate = "" }) {
+  const tx = (col, type) =>
+    `SUMIFS(Transactions!$${col}:$${col},Transactions!$B:$B,$A${r},Transactions!$D:$D,$B${r},Transactions!$C:$C,"${type}")`;
+  return [
+    position,
+    symbol,
+    name,
+    `=IF($B${r}="","",${tx("E", "BUY")}-${tx("E", "SELL")})`,
+    source,
+    price,
+    currency,
+    priceDate,
+    `=IF(OR($B${r}="",$J${r}="",$F${r}=""),"",$J${r}*$D${r})`,
+    `=IF($B${r}="","",LET(u,${tx("E", "BUY")},c,${tx("J", "BUY")},IF(OR(u=0,c=0),"",c/u)))`,
+    `=IF(OR($B${r}="",$F${r}=""),"",$D${r}*$F${r})`,
+    `=IF(OR($B${r}="",$I${r}=""),"",$K${r}-$I${r})`,
+    `=IF(OR($B${r}="",N($I${r})=0),"",$L${r}/$I${r})`,
+  ];
 }
 
 /** Value a transaction adds, as the sheet's Value column computes it. */
