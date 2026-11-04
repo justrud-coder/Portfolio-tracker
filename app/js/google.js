@@ -123,6 +123,16 @@ export class Sheets {
     tab.rows = rows + 50;
   }
 
+  /** Add a tab with the given title; returns its { id, rows }. */
+  async addTab(title, rows = 100) {
+    const res = await this.call(`:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title, gridProperties: { rowCount: rows, columnCount: 6 } } } }] }),
+    });
+    const props = res.replies?.[0]?.addSheet?.properties;
+    return { id: props?.sheetId, rows: props?.gridProperties?.rowCount ?? rows };
+  }
+
   /** Delete one whole row (1-based) from a tab; the rows below move up. */
   async deleteRow(tab, row) {
     await this.call(`:batchUpdate`, {
