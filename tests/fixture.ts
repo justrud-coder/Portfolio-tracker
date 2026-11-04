@@ -1,0 +1,35 @@
+// A trimmed copy of Sheet1's layout: the last two snapshot columns (D, E stand in for BD, BE).
+export const values = [
+  ["", "Pozicija", "Turto klase", "Verte\n2026.09.05", "Verte\n2026.10.05"],
+  ["", "III pillar", "Akcijos", 12915, 13039],
+  ["", "Crypto", "Crypto", 0, 0],
+  ["", "Cash", "Cash", 2800, 3500],
+  ["", "Savings account", "", 0, 360],
+  ["", "NT Titnago", "NT", 47293.5, 47320],
+  ["", "II pillar", "II pakopa", 0, ""],
+  ["", "IBKR", "Akcijos", 45500, 46200],
+  ["", "Vinted options", "Akcijos", 56253, 58303],
+  ["", "Indeliai EUR", "", 61251, 61345],
+  ["", "Viso", "", 226012.5, 230067],
+  ["", "Liquid", "", 110251, 112500],
+  [],
+  ["", "", "", "Split"],
+  ["Akcijos", 0.25, 59339, 0.25],
+  ["Cash", 0.27, 66200],
+  ["Liquid asset", "", 110251],
+];
+
+export const formulas = [
+  ...values.slice(0, 3),
+  ["", "Cash", "Cash", "=2100+700", "=2100+700+700"],
+  ...values.slice(4, 5),
+  ["", "NT Titnago", "NT", "=(40*3000-25413)/2", "=(40*3000-25360)/2"],
+  ...values.slice(6, 10),
+  ["", "Viso", "", "=SUM(D2:D10)", "=SUM(E2:E10)"],
+  ["", "Liquid", "", "=D2+D4+D5+D8+D10", "=E2+E4+E5+E8+E10"],
+  [],
+  ["", "", "", "Split"],
+  ["Akcijos", "=C15/$C$17", "=E2+E8+$E$9", "=C15/$C$17"],
+  ["Cash", "=C16/$C$17", "=E4+E5+E10"],
+  ["Liquid asset", "", "=D12"],
+];

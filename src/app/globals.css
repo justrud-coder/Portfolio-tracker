@@ -1,0 +1,94 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --border: #e4e4df;
+  --accent: #2f6f4f;
+  --accent-text: #ffffff;
+  --up: #2f7d4a;
+  --down: #b4413c;
+  --input: #ffffff;
+  --c1: #2f6f4f;
+  --c2: #4b7bb5;
+  --c3: #c08a2e;
+  --c4: #8a5aa8;
+  --c5: #b4574a;
+  --c6: #5c8f8a;
+  --c7: #7a7a72;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141413;
+    --surface: #1e1e1c;
+    --text: #ededea;
+    --muted: #a3a39c;
+    --border: #33332f;
+    --accent: #5fae84;
+    --accent-text: #0e1a13;
+    --up: #6cc08c;
+    --down: #e2817b;
+    --input: #262624;
+    --c1: #5fae84;
+    --c2: #7fa6d9;
+    --c3: #ddb05e;
+    --c4: #b38ad0;
+    --c5: #d98577;
+    --c6: #84bdb7;
+    --c7: #a3a39c;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+}
+a { color: var(--accent); }
+.container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 20px; flex-wrap: wrap; }
+header.top h1 { font-size: 20px; margin: 0; }
+nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+nav a, .btn {
+  display: inline-block; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); text-decoration: none; font: inherit; cursor: pointer;
+}
+.btn.primary, nav a.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .label { color: var(--muted); font-size: 13px; }
+.tile .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.tile .sub { font-size: 13px; margin-top: 2px; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.muted { color: var(--muted); }
+.grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+@media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-size: 13px; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; }
+input[type="number"], input[type="date"], input[type="password"], input[type="text"] {
+  background: var(--input); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font: inherit; width: 100%; min-width: 0;
+}
+td input[type="number"] { width: 130px; text-align: right; }
+.bar-row { display: grid; grid-template-columns: 110px 1fr 52px; gap: 8px; align-items: center; margin: 8px 0; font-size: 14px; }
+.bar { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+.bar > span { display: block; height: 100%; }
+.msg { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid var(--border); }
+.msg.error { border-color: var(--down); color: var(--down); }
+.msg.ok { border-color: var(--up); color: var(--up); }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.login { max-width: 340px; margin: 12vh auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+details summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
