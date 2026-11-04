@@ -319,6 +319,9 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   assert.equal(c.ytd.value, 250000 - 201190);
   assert.equal(m.periodChanges(monthly.slice(0, 1), 250000, "2026-11-04").ytd.from, "2025-12-05");
   assert.equal(m.periodChanges([], 1, "2026-11-04").month.value, null);
+  // Last 12 months: the snapshot closest to 4 Nov 2025.
+  assert.equal(c.year.from, "2025-12-05");
+  assert.equal(c.year.value, 250000 - 195078);
 
   const og = m.overviewGroups(
     [
@@ -348,8 +351,8 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   ]);
   assert.equal(og[1].items.find((i) => i.name === "Deposit").updated, "2026-11-04");
   assert.equal(og[1].items.find((i) => i.name === "Cash").updated, "2026-10-05");
-  // A year back from 4 Nov 2026: the last snapshot on or before 4 Nov 2025.
-  assert.deepEqual(og[1].items.find((i) => i.name === "Deposit").change, { value: 4, pct: 0.25, from: "2025-10-05", basis: "year" });
+  // A year back from 4 Nov 2026: the snapshot closest to 4 Nov 2025.
+  assert.deepEqual(og[1].items.find((i) => i.name === "Deposit").change, { value: 19, pct: 19, from: "2025-11-05", basis: "year" });
   assert.equal(og[1].items.find((i) => i.name === "Cash").change, null);
   assert.equal(og[1].items.find((i) => i.name === "IBKR cash").change, null);
   // A holdings account's only holding uses the account's history...

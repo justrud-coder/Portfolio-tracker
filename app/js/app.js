@@ -16,6 +16,7 @@ import {
   retirementPlan,
   parseAccounts,
   parseHistory,
+  planSnapshot,
   parseHoldings,
   parseLists,
   parseMonthly,
@@ -285,8 +286,8 @@ function renderHome(root) {
 
   const changes = periodChanges(d.monthly, s.total, today);
   const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
-  const changeTile = (label, c, fromWord) => `
-      <div class="card stat">
+  const changeTile = (label, c, fromWord, wide = false) => `
+      <div class="card stat${wide ? " wide" : ""}">
         <div class="label">${label}</div>
         <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
         <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
@@ -302,6 +303,7 @@ function renderHome(root) {
     <section class="stats">
       ${changeTile("Last month", changes.month, "since")}
       ${changeTile("This year", changes.ytd, "since")}
+      ${changeTile("Last 12 months", changes.year, "since", true)}
     </section>
 
     <section class="card">
@@ -591,6 +593,7 @@ const TX_MODES = [
   ["WITHDRAWAL", "Withdraw"],
   ["PENSION", "III pillar"],
   ["OPTIONS", "Options"],
+  ["REAL_ESTATE", "Real estate"],
 ];
 const NEW_FUND = "__new";
 
@@ -605,6 +608,7 @@ function renderAdd(root) {
   const brokerCash = d.holdings.find((h) => h.position === BROKER && h.symbol === BROKER_CASH);
   const funds = d.holdings.filter((h) => h.position === PENSION);
   const options = d.holdings.find((h) => h.position === OPTIONS);
+  const properties = d.accounts.filter((a) => a.active && a.assetClass === "Real estate");
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
   const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
   const recent = d.transactions.slice(-10).reverse();
@@ -648,6 +652,12 @@ function renderAdd(root) {
         <div class="two" data-for="options">
           <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
           <label class="field">Value per option (€)<input name="optionValue" inputmode="decimal" autocomplete="off" value="${options?.price ?? ""}"></label>
+        </div>
+        <div class="two" data-for="realestate">
+          <label class="field">Property
+            <select name="property">${properties.map((a) => `<option value="${esc(a.name)}" ${a.name === last.property ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>
+          </label>
+          <label class="field">New value (€)<input name="propertyValue" inputmode="decimal" autocomplete="off"></label>
         </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
@@ -716,7 +726,9 @@ function renderAdd(root) {
     const pension = type === "PENSION";
     form.querySelector('[data-for="trade"]').hidden = !trade;
     const opts = type === "OPTIONS";
-    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts;
+    const estate = type === "REAL_ESTATE";
+    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate;
+    form.querySelector('[data-for="realestate"]').hidden = !estate;
     form.querySelector('[data-for="pension"]').hidden = !pension;
     form.querySelector('[data-for="options"]').hidden = !opts;
     const toTotal = type === "DEPOSIT" && f.get("cashMode") === "total";
@@ -756,6 +768,10 @@ function renderAdd(root) {
       } else {
         msg = `Now ${eurCents(current)}${amount ? `, ${eurCents(type === "DEPOSIT" ? current + amount : current - amount)} after` : ""}.`;
       }
+    } else if (estate) {
+      const acct = properties.find((a) => a.name === f.get("property"));
+      const value = num(String(f.get("propertyValue") ?? "").replace(",", "."));
+      if (acct) msg = `Now ${eurCents(acct.value)}${value !== null ? `, ${eurCents(value)} after (${value >= acct.value ? "+" : "−"}${eurCents(Math.abs(value - acct.value))})` : ""}.`;
     } else if (opts && options) {
       const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
       const value = num(f.get("optionValue")) ?? options.price ?? 0;
@@ -771,6 +787,7 @@ function renderAdd(root) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
+    if (f.type === "REAL_ESTATE") return saveRealEstate(f);
     if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
     if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
       return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
@@ -858,6 +875,44 @@ async function savePension(row, newFundName, unitValue = null) {
   }
   await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
   return fund;
+}
+
+/**
+ * Real estate: save the property's new value as a History snapshot dated on
+ * the form's date (replacing one already saved for that day). The account's
+ * value then starts from it.
+ */
+async function saveRealEstate(f) {
+  const value = num(String(f.propertyValue ?? "").replace(",", "."));
+  const errors = [];
+  if (!f.property) errors.push("The sheet has no active Real estate accounts.");
+  if (value === null || value < 0) errors.push("Enter the new value, 0 or more.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  if (f.date > todayIso()) errors.push("The date can't be in the future.");
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    // Re-read History so the row lands after whatever is there now.
+    const [grid] = await sheets.batchGet([RANGES.history]);
+    const note = String(f.note ?? "").trim() || "Set in the app";
+    const plan = planSnapshot(f.date, [{ account: f.property, value: Math.round(value * 100) / 100, note }], parseHistory(grid), nextFreeRow(grid));
+    const meta = await freshMeta();
+    const tab = meta.tabs.History;
+    if (!tab) throw new Error("The sheet has no History tab.");
+    await sheets.ensureRows(tab, plan.lastRow);
+    await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
+    ls.set("pt.lastTx", JSON.stringify({ type: "REAL_ESTATE", property: f.property }));
+    showBanner(`Saved ${esc(f.property)} at ${eurCents(value)}.`, "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
 }
 
 /** III pillar with only a new unit value: update the fund's latest price, no transaction. */
