@@ -299,6 +299,18 @@ details > summary.row:active { opacity: 0.6; }
 .goal .figs dd { margin: 4px 0 0; font-weight: 700; font-size: 17px; }
 .goal p.small { line-height: 1.5; }
 
+/* What-if sliders on Goals */
+.whatif .readout { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; margin: 0 0 8px; }
+.whatif .readout > div { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
+.whatif .readout .label { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.whatif .readout .num { font-weight: 700; font-size: 17px; margin-top: 2px; }
+.whatif .slider { display: block; padding: 12px 0 4px; border-top: 1px solid var(--sep); }
+.whatif .readout + .slider { border-top: 0; }
+.whatif .slider-head { display: flex; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 500; }
+.whatif .slider-head .num { font-weight: 700; }
+.whatif input[type="range"] { width: 100%; margin: 10px 0 6px; accent-color: var(--accent); height: 28px; touch-action: pan-y; }
+.whatif p.small { margin: 8px 0 0; line-height: 1.5; }
+
 /* ---------- forms: one outlined group of rows, like a booking panel ---------- */
 .card:has(> form) > h2 { margin-bottom: 18px; }
 .card:has(> form) > p { margin: 0 0 14px; line-height: 1.5; }

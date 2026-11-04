@@ -369,3 +369,11 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   assert.deepEqual(m.repeatForm(["", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.7034, "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "PENSION", fund: "ARTEA-AA16", pensionUnits: 142.17, pensionCash: 100 });
   assert.deepEqual(m.repeatForm(["", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "OPTIONS", optionUnits: 40 });
 });
+
+test("changedInputs lists only the inputs that differ from the saved plan", async () => {
+  const { changedInputs } = await import("../app/js/model.js");
+  const saved = { retireAge: 50, monthly: 3000, returnPre: 0.035, counted: "Liquid" };
+  assert.deepEqual(changedInputs(saved, { ...saved }), []);
+  assert.deepEqual(changedInputs(saved, { ...saved, returnPre: 3.5 / 100 }), []);
+  assert.deepEqual(changedInputs(saved, { ...saved, retireAge: 52, counted: "Total" }), ["retireAge", "counted"]);
+});
