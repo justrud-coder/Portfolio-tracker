@@ -320,6 +320,13 @@ export function transactionRow(t) {
 }
 
 /** Value a transaction adds, as the sheet's Value column computes it. */
+/** True when two Transactions rows hold the same entry (columns A–I). */
+export function sameTransaction(a, b) {
+  const cell = (r, i) => String(r?.[i] ?? "").trim();
+  for (let i = 0; i < 9; i++) if (cell(a, i) !== cell(b, i)) return false;
+  return true;
+}
+
 export function transactionValue(row) {
   const [, , type, , units, price, fees, cash] = row;
   const f = num(fees) ?? 0;
