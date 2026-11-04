@@ -17,6 +17,9 @@ import {
   changedInputs,
   parseAccounts,
   parseHistory,
+  historySeries,
+  livePoint,
+  pointsInRange,
   planSnapshot,
   parseHoldings,
   parseLists,
@@ -56,6 +59,7 @@ const DEPOSIT_KEY = "pt.deposit";
 const CACHE_KEY = "pt.cache.v1";
 const VIEW_KEY = "pt.view";
 const RANGE_KEY = "pt.range";
+const SPLIT_KEY = "pt.chartSplit";
 const CLIENT_KEY = "pt.clientId";
 
 const $ = (s, root = document) => root.querySelector(s);
@@ -85,6 +89,7 @@ const state = {
   meta: null,
   view: ls.get(VIEW_KEY) || "home",
   range: ls.get(RANGE_KEY) || "all",
+  split: ls.get(SPLIT_KEY) === "1",
   busy: false,
 };
 
@@ -280,26 +285,21 @@ function changeLine(v, p) {
   return `<span class="${tone(v)} num">${signedEur(v)}</span> <span class="${tone(v)} num">(${signedPct(p)})</span>`;
 }
 
-function filterRange(points) {
-  if (state.range === "all" || !points.length) return points;
-  const years = state.range === "1y" ? 1 : 3;
-  const end = new Date(points[points.length - 1].date);
-  end.setUTCFullYear(end.getUTCFullYear() - years);
-  const from = end.toISOString().slice(0, 10);
-  return points.filter((p) => p.date >= from);
-}
-
 function renderHome(root) {
   const d = state.data;
   const s = summarize(d.accounts, d.monthly);
   const priceDates = d.holdings.filter((h) => h.source === "yahoo" && h.priceDate).map((h) => h.priceDate).sort();
   const pricesAt = priceDates[priceDates.length - 1];
 
-  const points = d.monthly.map((m) => ({ date: m.date, value: m.total }));
+  // Built from the History tab rather than Monthly, so daily snapshots and
+  // the split by asset class need no extra formulas in the sheet.
   const today = todayIso();
-  if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
+  const series = d.history.length ? historySeries(d.history, d.accounts) : d.monthly;
+  const points = series.map((p) => ({ date: p.date, value: p.total, parts: p.parts }));
+  const last = points[points.length - 1];
+  if (!last || today > last.date) points.push({ ...livePoint(d.accounts, today), value: s.total });
 
-  const changes = periodChanges(d.monthly, s.total, today);
+  const changes = periodChanges(series, s.total, today);
   const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
   const changeTile = (label, c, fromWord, wide = false) => `
       <div class="card stat${wide ? " wide" : ""}">
@@ -323,9 +323,16 @@ function renderHome(root) {
 
     <section class="card">
       <div class="card-head">
-        <h2>Value over time</h2>
+        <h2>Net worth</h2>
+        <div class="seg" role="group" aria-label="Show">
+          <button data-split="0" aria-pressed="${!state.split}">Total</button>
+          <button data-split="1" aria-pressed="${state.split}">By class</button>
+        </div>
+      </div>
+      <div class="chart-range">
+        <span class="chart-change small" id="chart-change"></span>
         <div class="seg" role="group" aria-label="Time range">
-          ${["1y", "3y", "all"].map((r) => `<button data-range="${r}" aria-pressed="${state.range === r}">${r === "all" ? "All" : r.toUpperCase()}</button>`).join("")}
+          ${["1m", "1y", "3y", "all"].map((r) => `<button data-range="${r}" aria-pressed="${state.range === r}">${r === "all" ? "All" : r.toUpperCase()}</button>`).join("")}
         </div>
       </div>
       <div class="chart" id="chart"></div>
@@ -350,16 +357,29 @@ function renderHome(root) {
     · <a href="#" id="signout">Sign out</a></p>
   `;
 
-  const draw = () => lineChart($("#chart"), filterRange(points));
+  const draw = () => {
+    const shown = pointsInRange(points, state.range);
+    lineChart($("#chart"), shown, { label: "Net worth", stack: state.split ? chartStack(shown) : null });
+    const first = shown[0];
+    const end = shown[shown.length - 1];
+    const diff = first && end && shown.length > 1 ? end.value - first.value : null;
+    $("#chart-change").innerHTML =
+      diff === null ? "" : `<span class="${tone(diff)} num">${signedEur(diff)}${first.value ? ` (${signedPct(diff / first.value)})` : ""}</span> <span class="muted">since ${shortDate(first.date)}</span>`;
+  };
   draw();
-  root.querySelectorAll("[data-range]").forEach((b) =>
-    b.addEventListener("click", () => {
-      state.range = b.dataset.range;
-      ls.set(RANGE_KEY, state.range);
-      root.querySelectorAll("[data-range]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      draw();
-    }),
-  );
+  const pick = (attr, apply) =>
+    root.querySelectorAll(`[${attr}]`).forEach((b) =>
+      b.addEventListener("click", () => {
+        apply(b.getAttribute(attr));
+        root.querySelectorAll(`[${attr}]`).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+        draw();
+      }),
+    );
+  pick("data-range", (v) => ls.set(RANGE_KEY, (state.range = v)));
+  pick("data-split", (v) => {
+    state.split = v === "1";
+    ls.set(SPLIT_KEY, v);
+  });
   $("#signout").onclick = (e) => {
     e.preventDefault();
     signOut();
@@ -376,6 +396,19 @@ function renderHome(root) {
 // Fixed colours per group to match the coral theme, readable on light and dark.
 const GROUP_COLORS = { Stocks: "#e8475f", Cash: "#00a699", "Real estate": "#f26b3a", Options: "#8a5cf5", "III pillar pension": "#f5b400" };
 const SPARE_COLORS = ["#c13584", "#717171", "#b08968", "#3fa9f5"];
+
+/** Net worth chart bands, bottom to top: the steadiest classes at the bottom. */
+const STACK_ORDER = ["Real estate", "Options", "Pension", "Cash", "Stocks", "Crypto"];
+const STACK_COLORS = { Pension: "#d99a00", Crypto: "#3fa9f5", Other: "#717171" };
+
+function chartStack(points) {
+  const names = new Set(points.flatMap((p) => Object.keys(p.parts ?? {})));
+  const rank = (n) => (STACK_ORDER.includes(n) ? STACK_ORDER.indexOf(n) : n === "Other" ? 99 : 50);
+  let spare = 0;
+  return [...names]
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .map((name) => ({ name, color: STACK_COLORS[name] ?? GROUP_COLORS[name] ?? SPARE_COLORS[spare++ % SPARE_COLORS.length] }));
+}
 
 /** Donut of each group's share of the total, with a legend. */
 function donut(items) {
