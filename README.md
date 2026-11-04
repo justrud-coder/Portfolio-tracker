@@ -34,6 +34,7 @@ If you save again with the same date, only the position values in that column ar
 | III pillar | ARTEA-AA16 | Artea Ambicingas Active 16+ | 18763.33 | manual | 0.7034 | EUR | 2026-06-30 |
 
 - `yahoo`: the price is fetched from Yahoo Finance and converted to EUR. Use Yahoo symbols such as `VWCE.DE` or `VHYL.AS`.
+- `google`: `Last price` is a `=GOOGLEFINANCE(...)` formula in the sheet (e.g. `AMS:VWCE`), so the sheet keeps the price current. The app reads it and never overwrites it.
 - `manual`: you type the unit price on the update screen.
 - `fixed`: the price is always `Last price`. Use it for cash, with Units as the amount.
 

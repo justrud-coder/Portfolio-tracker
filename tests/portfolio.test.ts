@@ -4,7 +4,7 @@ import { parsePortfolio, parseHeaderDate, toNumber } from "@/lib/portfolio";
 import { planSnapshot } from "@/lib/snapshot";
 import { buildDashboard } from "@/lib/stats";
 import { fetchQuote } from "@/lib/prices";
-import { parseHoldings } from "@/lib/holdings";
+import { holdingUpdates, parseHoldings } from "@/lib/holdings";
 import { formulas, values } from "./fixture";
 
 describe("columns", () => {
@@ -119,6 +119,19 @@ describe("holdings", () => {
     expect(h).toHaveLength(2);
     expect(h[0]).toMatchObject({ units: 179, source: "yahoo", lastPrice: null });
     expect(h[1]).toMatchObject({ source: "manual", lastPrice: 0.7034 });
+  });
+
+  it("never writes the price cells of GOOGLEFINANCE or fixed rows", () => {
+    const h = parseHoldings([
+      ["Position", "Symbol", "Name", "Units", "Price source", "Last price", "Currency", "Price date"],
+      ["IBKR", "ISPA.DE", "iShares", 200, "manual", 31.4, "EUR", "2026-11-04"],
+      [],
+      ["IBKR", "VWCE.DE", "Vanguard", 179, "google", 169.22, "EUR", "2026-11-04"],
+      ["IBKR", "CASH", "Cash", 50, "fixed", 1, "EUR", ""],
+    ]);
+    expect(holdingUpdates(h).map((u) => u.range)).toEqual([
+      "Holdings!D2", "Holdings!F2", "Holdings!H2", "Holdings!D4", "Holdings!D5",
+    ]);
   });
 });
 

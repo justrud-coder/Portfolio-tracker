@@ -206,6 +206,11 @@ export function UpdateForm({ lastDate, positions, holdings: initial }: { lastDat
                           {h.lastPrice === null ? "–" : fmtPrice(h.lastPrice)}
                           <div className="muted" style={{ fontSize: 12 }}>web · {h.priceDate || "not fetched"}</div>
                         </>
+                      ) : h.source === "google" ? (
+                        <>
+                          {h.lastPrice === null ? "–" : fmtPrice(h.lastPrice)}
+                          <div className="muted" style={{ fontSize: 12 }}>live · Google Finance</div>
+                        </>
                       ) : h.source === "fixed" ? (
                         <span className="muted">{fmtPrice(h.lastPrice ?? 1)}</span>
                       ) : (

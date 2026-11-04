@@ -1,7 +1,7 @@
 import "server-only";
 import { JWT } from "google-auth-library";
 import { Cell, Portfolio, parsePortfolio } from "./portfolio";
-import { HOLDINGS_SHEET, Holding, holdingsToRows, parseHoldings } from "./holdings";
+import { HOLDINGS_SHEET, Holding, holdingUpdates, parseHoldings } from "./holdings";
 import { SnapshotInput, SnapshotPlan, planSnapshot } from "./snapshot";
 
 export const PORTFOLIO_SHEET = process.env.PORTFOLIO_SHEET_NAME || "Sheet1";
@@ -72,12 +72,11 @@ export async function loadHoldings(): Promise<Holding[]> {
   }
 }
 
+/** Write units (and, for typed or web prices, price and price date) back to each holding's own row. */
 export async function saveHoldings(holdings: Holding[]): Promise<void> {
-  await call(`/values/${encodeURIComponent(`${HOLDINGS_SHEET}!A1:H200`)}:clear`, { method: "POST", body: "{}" });
-  await call(`/values/${encodeURIComponent(`${HOLDINGS_SHEET}!A1`)}?valueInputOption=RAW`, {
-    method: "PUT",
-    body: JSON.stringify({ values: holdingsToRows(holdings) }),
-  });
+  const data = holdingUpdates(holdings);
+  if (!data.length) return;
+  await call(`/values:batchUpdate`, { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data }) });
 }
 
 export async function saveSnapshot(input: SnapshotInput): Promise<SnapshotPlan> {
