@@ -50,8 +50,7 @@ export async function fetchStooqQuote(symbol, fetcher = fetch) {
   return { symbol, price, currency: "EUR", priceEur: price, date };
 }
 
-export async function fetchQuote(symbol, fetcher = fetch, source = "yahoo") {
-  if (source === "artea") return fetchArteaQuote(symbol, fetcher);
+export async function fetchQuote(symbol, fetcher = fetch) {
   try {
     return await fetchYahooQuote(symbol, fetcher);
   } catch (yahooError) {
@@ -63,80 +62,8 @@ export async function fetchQuote(symbol, fetcher = fetch, source = "yahoo") {
   }
 }
 
-// ---------- Artea pension funds ----------
-
-/** Fund pages on artea.lt, by the symbol used on the Holdings tab. */
-export const ARTEA_PAGES = {
-  "ARTEA-AA16": "https://www.artea.lt/lt/privatiems/pensija/iii-pakopos-pensija/artea-ambicingas-active-16",
-};
-
-/** Visible text of an HTML page, with tags dropped and whitespace collapsed. */
-export function pageText(html) {
-  return html
-    .replace(/<(script|style|noscript)\b[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;|&#160;/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const toIso = (d) => {
-  const m = d.match(/^(\d{4})[-.](\d{2})[-.](\d{2})$/) ?? d.match(/^(\d{2})[-.](\d{2})[-.](\d{4})$/);
-  if (!m) return null;
-  return m[1].length === 4 ? `${m[1]}-${m[2]}-${m[3]}` : `${m[3]}-${m[2]}-${m[1]}`;
-};
-
-/**
- * Unit value (vieneto vertė) and its date from an Artea fund page.
- * Returns null when the page doesn't show one.
- */
-export function parseArteaPage(html) {
-  const text = pageText(html);
-  const label = /(vieneto\s+vert[eė]|VAV)/gi;
-  for (let m; (m = label.exec(text)); ) {
-    const after = text.slice(m.index, m.index + 160);
-    const num = after.match(/(?<![\d.,])(\d{1,3}[.,]\d{3,6})(?![\d.,])/);
-    if (!num) continue;
-    const price = Number(num[1].replace(",", "."));
-    if (!Number.isFinite(price) || price <= 0) continue;
-    const near = text.slice(Math.max(0, m.index - 120), m.index + 200);
-    const dm = near.match(/\b(\d{4}[-.]\d{2}[-.]\d{2}|\d{2}[-.]\d{2}[-.]\d{4})\b/);
-    return { price, date: dm ? toIso(dm[1]) : null };
-  }
-  return null;
-}
-
-/** What the page looks like when no price was found, for the job log. */
-function arteaClues(html) {
-  const text = pageText(html);
-  const clues = [];
-  for (const m of text.matchAll(/vert|VAV|EUR/gi)) {
-    clues.push(text.slice(Math.max(0, m.index - 60), m.index + 100));
-    if (clues.length >= 5) break;
-  }
-  const urls = [...new Set(html.match(/https?:[^"'\s<>]+?(?:api|json|xlsx?|csv|graph|chart)[^"'\s<>]*/gi) ?? [])].slice(0, 10);
-  return `${html.length} bytes, ${text.length} chars of text.\nText near keywords:\n  ${clues.join("\n  ") || "(none)"}\nData URLs:\n  ${urls.join("\n  ") || "(none)"}`;
-}
-
-export async function fetchArteaQuote(symbol, fetcher = fetch) {
-  const url = ARTEA_PAGES[symbol];
-  if (!url) throw new Error(`No artea.lt page known for ${symbol}`);
-  const res = await fetcher(url, { headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", "Accept-Language": "lt,en;q=0.8" } });
-  if (!res.ok) throw new Error(`artea.lt returned ${res.status} for ${symbol}`);
-  const html = await res.text();
-  const found = parseArteaPage(html);
-  if (!found) throw new Error(`No unit value found on the ${symbol} page. ${arteaClues(html)}`);
-  const date = found.date ?? new Date().toISOString().slice(0, 10);
-  return { symbol, price: found.price, currency: "EUR", priceEur: found.price, date };
-}
-
 export async function fetchQuotes(symbols, fetcher = fetch) {
-  // `symbols` is a list of symbols (Yahoo) or of [symbol, source] pairs.
-  const list = symbols.map((s) => (Array.isArray(s) ? s : [s, "yahoo"]));
-  const results = await Promise.allSettled(list.map(([s, src]) => fetchQuote(s, fetcher, src)));
-  symbols = list.map(([s]) => s);
+  const results = await Promise.allSettled(symbols.map((s) => fetchQuote(s, fetcher)));
   const quotes = {};
   const errors = {};
   results.forEach((r, i) => {
@@ -148,22 +75,9 @@ export async function fetchQuotes(symbols, fetcher = fetch) {
 
 /**
  * Cell writes for the Holdings tab: Last price and Price date for every
- * "yahoo" or "artea" holding that got a quote. Columns are found by header, so moving
+ * "yahoo" holding that got a quote. Columns are found by header, so moving
  * them in the sheet doesn't break the action.
  */
-/** Holdings price sources the price job updates. */
-export const PRICED_SOURCES = ["yahoo", "artea"];
-
-/**
- * A fetched price that moved more than this against the sheet's last price
- * is treated as a misread page and not written.
- */
-export function plausible(previous, price, maxRatio = 1.5) {
-  const p = Number(previous);
-  if (!Number.isFinite(p) || p <= 0) return true;
-  return price / p <= maxRatio && p / price <= maxRatio;
-}
-
 export function priceUpdates(grid, quotes, tab = "Holdings") {
   const header = (grid[0] ?? []).map((h) => String(h ?? "").trim().toLowerCase());
   const col = (name) => header.indexOf(name);
@@ -184,7 +98,7 @@ export function priceUpdates(grid, quotes, tab = "Holdings") {
     const symbol = String(row[c.symbol] ?? "").trim();
     const source = String(row[c.source] ?? "").trim().toLowerCase();
     const q = quotes[symbol];
-    if (!PRICED_SOURCES.includes(source) || !q) continue;
+    if (source !== "yahoo" || !q) continue;
     out.push({ range: `${tab}!${letter(c.price)}${r + 1}`, values: [[Math.round(q.priceEur * 10000) / 10000]] });
     out.push({ range: `${tab}!${letter(c.date)}${r + 1}`, values: [[q.date]] });
   }
