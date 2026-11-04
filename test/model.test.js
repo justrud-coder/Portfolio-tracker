@@ -264,3 +264,41 @@ test("monthly snapshot saves active accounts on the Vilnius date", async () => {
     { account: "Cash", value: 3500 },
   ]);
 });
+
+test("overview changes, account groups, new-total deposits and repeats", async () => {
+  const m = await import("../app/js/model.js");
+  assert.equal(m.addMonths("2026-03-31", -1), "2026-02-28");
+  assert.equal(m.addMonths("2026-11-04", -1), "2026-10-04");
+  const monthly = [
+    { date: "2025-12-05", total: 195078 },
+    { date: "2026-01-08", total: 201190 },
+    { date: "2026-09-05", total: 237713 },
+    { date: "2026-10-05", total: 242162 },
+  ];
+  const c = m.periodChanges(monthly, 250000, "2026-11-04");
+  assert.equal(c.month.from, "2026-09-05");
+  assert.equal(c.month.value, 250000 - 237713);
+  assert.equal(c.ytd.from, "2025-12-05");
+  assert.equal(c.ytd.value, 250000 - 195078);
+  // No snapshot last year: YTD starts at the year's first snapshot.
+  assert.equal(m.periodChanges(monthly.slice(1), 250000, "2026-11-04").ytd.from, "2026-01-08");
+  assert.equal(m.periodChanges([], 1, "2026-11-04").month.value, null);
+
+  const groups = m.groupAccounts([
+    { name: "Cash", assetClass: "Cash", active: true, value: 10 },
+    { name: "IBKR", assetClass: "Stocks", active: true, value: 5 },
+    { name: "III pillar", assetClass: "Pension", active: true, value: 7 },
+    { name: "Crypto", assetClass: "Crypto", active: false, value: 0 },
+    { name: "Vinted options", assetClass: "Options", active: true, value: 3 },
+  ]);
+  assert.deepEqual(groups.map((g) => [g.name, g.total]), [["Stocks", 5], ["Cash", 10], ["Options", 3], ["Pension", 7]]);
+
+  assert.deepEqual(m.moveToTotal(3500, 4200), { type: "DEPOSIT", amount: 700 });
+  assert.deepEqual(m.moveToTotal(3500, 3000.5), { type: "WITHDRAWAL", amount: 499.5 });
+  assert.equal(m.moveToTotal(3500, 3500), null);
+
+  assert.deepEqual(m.repeatForm(["2026-11-01", "IBKR", "BUY", "VWCE.DE", 2, 170, "", "", "x"], "2026-12-01"), { date: "2026-12-01", note: "x", type: "BUY", symbol: "VWCE.DE", units: 2, price: 170 });
+  assert.deepEqual(m.repeatForm(["", "Cash", "DEPOSIT", "", "", "", "", 500, ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "DEPOSIT", account: "Cash", cash: 500 });
+  assert.deepEqual(m.repeatForm(["", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.7034, "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "PENSION", fund: "ARTEA-AA16", pensionUnits: 142.17, pensionCash: 100 });
+  assert.deepEqual(m.repeatForm(["", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "OPTIONS", optionUnits: 40 });
+});

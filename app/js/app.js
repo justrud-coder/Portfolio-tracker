@@ -20,6 +20,10 @@ import {
   parseLists,
   parseMonthly,
   summarize,
+  periodChanges,
+  groupAccounts,
+  moveToTotal,
+  repeatForm,
   transactionRow,
   transactionValue,
   num,
@@ -279,6 +283,14 @@ function renderHome(root) {
   const today = todayIso();
   if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
 
+  const changes = periodChanges(d.monthly, s.total, today);
+  const changeTile = (label, c, fromWord) => `
+      <div class="card stat">
+        <div class="label">${label}</div>
+        <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
+        <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
+      </div>`;
+
   const gainTile =
     s.gain === null
       ? `<div class="value muted">–</div><div class="sub muted">Add BUY transactions with prices to see this.</div>`
@@ -293,16 +305,8 @@ function renderHome(root) {
     </section>
 
     <section class="stats">
-      <div class="card stat">
-        <div class="label">Since last snapshot</div>
-        <div class="value">${s.sinceSnapshot === null ? "–" : `<span class="${tone(s.sinceSnapshot)} num">${signedEur(s.sinceSnapshot)}</span>`}</div>
-        <div class="sub">${s.lastSnapshot ? `<span class="${tone(s.sinceSnapshot)} num">${signedPct(s.sinceSnapshotPct)}</span> <span class="muted">since ${shortDate(s.lastSnapshot.date)}</span>` : ""}</div>
-      </div>
-      <div class="card stat">
-        <div class="label">Last month</div>
-        <div class="value">${s.lastMonth === null ? "–" : `<span class="${tone(s.lastMonth)} num">${signedEur(s.lastMonth)}</span>`}</div>
-        <div class="sub">${s.prevSnapshot ? `<span class="${tone(s.lastMonth)} num">${signedPct(s.lastMonthPct)}</span> <span class="muted">to ${shortDate(s.lastSnapshot.date)}</span>` : ""}</div>
-      </div>
+      ${changeTile("Last month", changes.month, "since")}
+      ${changeTile("This year", changes.ytd, "since")}
       <div class="card stat wide">
         <div class="label">Gain vs cost</div>
         ${gainTile}
@@ -324,15 +328,15 @@ function renderHome(root) {
       <div class="bars">${bars(s.allocation)}</div>
     </section>
 
+    ${groupAccounts(d.accounts)
+      .map(
+        (g) => `
     <section class="card">
-      <h2>Liquidity</h2>
-      <div class="bars">${bars(s.liquidity)}</div>
-    </section>
-
-    <section class="card">
-      <h2>Accounts</h2>
-      <ul class="list">${accountsList(d)}</ul>
-    </section>
+      <div class="card-head"><h2>${esc(g.name)}</h2><span class="group-total num">${eur(g.total)}</span></div>
+      <ul class="list">${accountsList(d, g.accounts)}</ul>
+    </section>`,
+      )
+      .join("")}
 
     <p class="footnote">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
     · <a href="#" id="signout">Sign out</a></p>
@@ -352,6 +356,10 @@ function renderHome(root) {
     e.preventDefault();
     signOut();
     ls.del(CACHE_KEY);
+    ls.del(PIN_KEY);
+    ls.del(PASSKEY_KEY);
+    ls.del("pt.privacy");
+    document.documentElement.classList.remove("privacy");
     state.data = null;
     needSignIn();
   };
@@ -370,10 +378,8 @@ function bars(items) {
     .join("");
 }
 
-function accountsList(d) {
-  return d.accounts
-    .filter((a) => a.active)
-    .sort((a, b) => b.value - a.value)
+function accountsList(d, accounts) {
+  return accounts
     .map((a) => {
       const holdings = d.holdings.filter((h) => h.position === a.name);
       const right = `<div class="right"><div class="num">${eur(a.value)}</div>${
@@ -584,7 +590,13 @@ function renderAdd(root) {
           <label class="field">Account
             <select name="account">${cashAccounts.map((a) => `<option value="${esc(a.value)}" ${a.value === last.account ? "selected" : ""}>${esc(a.label)}</option>`).join("")}</select>
           </label>
-          <label class="field">Amount (€)<input name="cash" inputmode="decimal" autocomplete="off"></label>
+          <div class="field" data-for="cashmode">How
+            <div class="seg" role="radiogroup" aria-label="Deposit as">
+              <label><input type="radio" name="cashMode" value="add" checked><span>Add amount</span></label>
+              <label><input type="radio" name="cashMode" value="total"><span>New total</span></label>
+            </div>
+          </div>
+          <label class="field"><span id="cashLabel">Amount (€)</span><input name="cash" inputmode="decimal" autocomplete="off"></label>
         </div>
         <div class="two" data-for="pension">
           <label class="field">Fund
@@ -612,7 +624,7 @@ function renderAdd(root) {
               const v = transactionValue(c);
               return `<li><div class="row"><div><div class="name">${esc(c[2])} ${esc(c[3] || "")}</div><div class="meta">${esc(c[1])} · ${
                 serialToIso(c[0]) ? shortDate(serialToIso(c[0])) : "no date"
-              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
+              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="rep-btn" data-row="${t.row}" aria-label="Repeat this transaction" title="Repeat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.66 5.66L4 15.5M4 20v-4.5h4.5" /></svg></button><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
             })
             .join("")}</ul></section>`
         : ""
@@ -639,6 +651,25 @@ function renderAdd(root) {
   }
 
   const form = $("#tx");
+  for (const b of root.querySelectorAll(".rep-btn")) {
+    b.onclick = () => {
+      const t = d.transactions.find((x) => x.row === Number(b.dataset.row));
+      const v = t && repeatForm(t.cells, todayIso());
+      if (!v) return showBanner("This transaction can't be repeated from here.", "error");
+      form.reset();
+      form.querySelector(`input[name="type"][value="${v.type}"]`).checked = true;
+      for (const [k, val] of Object.entries(v)) {
+        const el = form.elements[k];
+        if (!el || k === "type") continue;
+        if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(val))) continue;
+        el.value = val;
+      }
+      sync();
+      $("#txErrors").innerHTML = "";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showBanner("Filled in from that transaction with today's date. Check it and tap Save.", "ok");
+    };
+  }
   const sync = () => {
     const f = new FormData(form);
     const type = f.get("type");
@@ -649,6 +680,9 @@ function renderAdd(root) {
     form.querySelector('[data-for="cash"]').hidden = trade || pension || opts;
     form.querySelector('[data-for="pension"]').hidden = !pension;
     form.querySelector('[data-for="options"]').hidden = !opts;
+    const toTotal = type === "DEPOSIT" && f.get("cashMode") === "total";
+    form.querySelector('[data-for="cashmode"]').hidden = type !== "DEPOSIT";
+    $("#cashLabel").textContent = toTotal ? "New total (€)" : "Amount (€)";
     form.querySelector('[data-for="newfund"]').hidden = f.get("fund") !== NEW_FUND;
     let msg = "";
     if (trade) {
@@ -663,6 +697,16 @@ function renderAdd(root) {
       const units = num(f.get("pensionUnits"));
       const cash = num(f.get("pensionCash"));
       if (units && cash) msg = `Unit price ${(cash / units).toLocaleString("en-IE", { maximumFractionDigits: 4 })} €. It becomes the fund's latest price.`;
+    } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
+      const acct = f.get("account");
+      const current = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
+      const amount = num(String(f.get("cash") ?? "").replace(",", "."));
+      if (toTotal) {
+        const move = amount === null ? null : moveToTotal(current, amount);
+        msg = `Now ${eurCents(current)}.${amount === null ? "" : move ? ` Saves a ${move.type.toLowerCase()} of ${eurCents(move.amount)}.` : " No change."}`;
+      } else {
+        msg = `Now ${eurCents(current)}${amount ? `, ${eurCents(type === "DEPOSIT" ? current + amount : current - amount)} after` : ""}.`;
+      }
     } else if (opts && options) {
       const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
       const value = num(f.get("optionValue")) ?? options.price ?? 0;
@@ -678,6 +722,7 @@ function renderAdd(root) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
+    if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
     const pension = f.type === "PENSION";
     const newFund = pension && f.fund === NEW_FUND;
     const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
@@ -802,6 +847,44 @@ async function saveOptionsForm(f, options) {
   }
 }
 
+/** Deposit form in "New total" mode: save the deposit or withdrawal that reaches the total. */
+async function saveNewTotal(f) {
+  const total = num(String(f.cash ?? "").replace(",", "."));
+  const errors = [];
+  if (total === null || total < 0) errors.push("Enter the new total, 0 or more.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    // Re-read the balance so the difference is taken from the sheet as it is now.
+    const [accountsGrid, holdingsGrid] = await sheets.batchGet([RANGES.accounts, RANGES.holdings]);
+    const current =
+      f.account === BROKER
+        ? parseHoldings(holdingsGrid).find((h) => h.position === BROKER && h.symbol === BROKER_CASH)?.value ?? 0
+        : parseAccounts(accountsGrid).find((a) => a.name === f.account)?.value ?? 0;
+    const move = moveToTotal(current, total);
+    const label = f.account === BROKER ? "IBKR cash" : f.account;
+    if (!move) {
+      showBanner(`${esc(label)} is already ${eurCents(total)}. Nothing saved.`, "ok");
+    } else {
+      const { row, errors: e2 } = transactionRow({ ...f, type: move.type, cash: move.amount });
+      if (!row) throw new Error(e2.join(" "));
+      await saveTransaction(row);
+      showBanner(`Saved a ${move.type.toLowerCase()} of ${eurCents(move.amount)}: ${esc(label)} is now ${eurCents(total)}.`, "ok");
+    }
+    ls.set("pt.lastTx", JSON.stringify({ type: "DEPOSIT", account: f.account }));
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
+}
+
 async function deleteTransaction(t) {
   // Re-read first: if the row has changed or moved since the list was drawn
   // (another device edited the sheet), refuse rather than delete the wrong one.
@@ -815,12 +898,114 @@ async function deleteTransaction(t) {
   await sheets.deleteRow(tab, t.row);
 }
 
+// ---------- privacy unlock (Face ID, with a PIN fallback) ----------
+// A privacy screen against people looking over your shoulder, not real
+// security: it gates the blur in this browser only. Face ID is used through
+// WebAuthn: the phone checks your face and the app only asks "did it pass?".
+const PASSKEY_KEY = "pt.passkey";
+const PIN_KEY = "pt.pin";
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+const randomBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
+
+async function faceIdAvailable() {
+  try {
+    return !!window.PublicKeyCredential && (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+  } catch {
+    return false;
+  }
+}
+
+async function pinHash(pin) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`portfolio-tracker:${pin}`));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Before the first blur: register Face ID, or choose a PIN where Face ID isn't available. */
+async function setUpUnlock() {
+  if (ls.get(PASSKEY_KEY) || ls.get(PIN_KEY)) return true;
+  if (await faceIdAvailable()) {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: randomBytes(32),
+        rp: { name: "Portfolio", id: location.hostname },
+        user: { id: randomBytes(16), name: "portfolio-privacy", displayName: "Portfolio privacy screen" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+        timeout: 60000,
+      },
+    }).catch(() => null);
+    if (!cred) return false;
+    ls.set(PASSKEY_KEY, b64(cred.rawId));
+    return true;
+  }
+  const pin = prompt("Face ID isn't available here. Choose a PIN to show the amounts again.");
+  if (pin === null) return false;
+  if (!/^\d{4,}$/.test(pin.trim())) throw new Error("Use at least 4 digits.");
+  if (prompt("Enter the PIN again.") !== pin) throw new Error("The PINs didn't match. Nothing changed.");
+  ls.set(PIN_KEY, await pinHash(pin.trim()));
+  return true;
+}
+
+/** To unblur: Face ID (or the PIN). Returns true when it passed. */
+async function unlock() {
+  const id = ls.get(PASSKEY_KEY);
+  if (id) {
+    const ok = await navigator.credentials
+      .get({
+        publicKey: {
+          challenge: randomBytes(32),
+          rpId: location.hostname,
+          allowCredentials: [{ type: "public-key", id: unb64(id) }],
+          userVerification: "required",
+          timeout: 60000,
+        },
+      })
+      .then((c) => !!c && !!(new Uint8Array(c.response.authenticatorData)[32] & 0x04))
+      .catch(() => false);
+    if (!ok) alert("Face ID didn't pass. The amounts stay hidden. If it keeps failing, sign out and back in to reset it.");
+    return ok;
+  }
+  const hash = ls.get(PIN_KEY);
+  if (!hash) return true;
+  const pin = prompt("Enter your PIN to show the amounts.");
+  if (pin === null) return false;
+  if ((await pinHash(pin.trim())) !== hash) {
+    alert("Wrong PIN. If you forgot it, sign out and back in to reset it.");
+    return false;
+  }
+  return true;
+}
+
 // ---------- boot ----------
 
 function boot() {
   $("#tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-view]");
     if (b) go(b.dataset.view);
+  });
+  // Privacy: blur every amount on screen, remembered on this device.
+  const setPrivacy = (on) => {
+    document.documentElement.classList.toggle("privacy", on);
+    const b = $("#privacy");
+    b.setAttribute("aria-pressed", String(on));
+    b.setAttribute("aria-label", on ? "Show amounts" : "Hide amounts");
+    b.title = on ? "Show amounts" : "Hide amounts";
+  };
+  setPrivacy(ls.get("pt.privacy") === "1");
+  $("#privacy").addEventListener("click", async () => {
+    const on = !document.documentElement.classList.contains("privacy");
+    try {
+      if (on) {
+        if (!(await setUpUnlock())) return;
+      } else if (!(await unlock())) {
+        return;
+      }
+    } catch (err) {
+      return alert(err.message || String(err));
+    }
+    ls.set("pt.privacy", on ? "1" : "0");
+    setPrivacy(on);
   });
   $("#refresh").addEventListener("click", () => (getToken() ? load() : signIn(clientId())));
   window.addEventListener("scroll", onScroll, { passive: true });
