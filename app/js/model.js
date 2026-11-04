@@ -581,8 +581,8 @@ export const RETIREMENT_INPUTS = {
   spend: "Monthly spend in retirement",
   pension: "Public pension per month",
   pensionAge: "Public pension from age",
-  returnPre: "Real return before retirement",
-  returnPost: "Real return in retirement",
+  returnPre: ["Real return before pension", "Real return before retirement"],
+  returnPost: ["Real return after pension", "Real return after retirement", "Real return in retirement"],
   inflation: "Inflation",
   counted: "Portfolio counted",
   monthly: "Monthly investment now",
@@ -615,7 +615,8 @@ export function parseRetirement(grid) {
     const label = norm(grid[r]?.[0]);
     if (!label) continue;
     for (const [key, name] of Object.entries(RETIREMENT_INPUTS)) {
-      if (rows[key] || !label.startsWith(norm(name))) continue;
+      const names = Array.isArray(name) ? name : [name];
+      if (rows[key] || !names.some((n) => label.startsWith(norm(n)))) continue;
       rows[key] = r + 1;
       const v = grid[r]?.[1];
       if (key === "counted") {
@@ -665,12 +666,18 @@ export function spendFrom(p, value, age) {
   return f.spend ? (value + p.pension * f.pension) / f.spend : null;
 }
 
-/** Value after `months` of growth at the pre-retirement return with `perMonth` added at each month end. */
+/**
+ * Value in today's money after `months` of growth at the pre-retirement return,
+ * with a fixed `perMonth` (not raised with inflation) added at each month end.
+ */
 function grow(p, start, perMonth, months) {
-  const i = monthly(p.returnPre);
+  const i = nominalMonthly(p);
   const g = (1 + i) ** months;
-  return start * g + perMonth * (i === 0 ? months : (g - 1) / i);
+  return (start * g + perMonth * (i === 0 ? months : (g - 1) / i)) / (1 + p.inflation) ** (months / 12);
 }
+
+/** Monthly nominal return before retirement: real return plus inflation. */
+const nominalMonthly = (p) => ((1 + p.returnPre) * (1 + p.inflation)) ** (1 / 12) - 1;
 
 /**
  * The whole plan, in today's money. Matches the formulas on the Retirement tab.
@@ -680,22 +687,21 @@ export function retirementPlan(p, counted) {
   const years = Math.max(0, p.retireAge - p.currentAge);
   const months = years * 12;
   const needed = neededAt(p, p.retireAge);
-  const i = monthly(p.returnPre);
+  const noNewMoney = counted * (1 + monthly(p.returnPre)) ** months;
+  // A fixed monthly amount: grow it in nominal euros, then compare with the
+  // target in the euros of the retirement year.
+  const i = nominalMonthly(p);
   const g = (1 + i) ** months;
-  const noNewMoney = counted * g;
-  const perMonth = months === 0 ? (needed > counted ? null : 0) : Math.max(0, (needed - noNewMoney) / (i === 0 ? months : (g - 1) / i));
+  const neededNominal = needed * (1 + p.inflation) ** years;
+  const perMonth =
+    months === 0 ? (needed > counted ? null : 0) : Math.max(0, (neededNominal - counted * g) / (i === 0 ? months : (g - 1) / i));
   const projected = grow(p, counted, p.monthly, months);
   let status = "Behind";
   if (perMonth === 0 || (perMonth !== null && p.monthly >= perMonth * 1.1)) status = "Ahead";
   else if (perMonth !== null && p.monthly >= perMonth * 0.9) status = "On track";
 
-  let earliestAge = null;
-  for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
-    if (grow(p, counted, p.monthly, (age - p.currentAge) * 12) >= neededAt(p, age)) {
-      earliestAge = age;
-      break;
-    }
-  }
+  const byAge = retirementByAge(p, counted);
+  const earliestAge = byAge.find((r) => r.canRetire)?.age ?? null;
 
   return {
     years,
@@ -709,6 +715,23 @@ export function retirementPlan(p, counted) {
     supportedSpend: spendFrom(p, projected, p.retireAge),
     todaySpend: spendFrom(p, counted, p.currentAge),
     earliestAge,
+    byAge,
     status,
   };
+}
+
+/**
+ * One row per possible retirement age, from now until the plan ends: what the
+ * portfolio would be at that age with the current monthly investment, what is
+ * needed to retire then, and the monthly spend it would pay. Today's money.
+ * Matches the table on the Retirement tab.
+ */
+export function retirementByAge(p, counted) {
+  const out = [];
+  for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
+    const portfolio = grow(p, counted, p.monthly, (age - p.currentAge) * 12);
+    const needed = neededAt(p, age);
+    out.push({ age, portfolio, needed, spend: spendFrom(p, portfolio, age), canRetire: portfolio >= needed });
+  }
+  return out;
 }

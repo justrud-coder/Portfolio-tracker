@@ -412,6 +412,8 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
   .stat.wide { grid-column: auto; }
 }
 
+.row.pick .name { font-weight: 600; }
+
 /* Radio-based pill chips (deposit: add amount / new total) */
 .seg label { position: relative; }
 .seg label input { position: absolute; opacity: 0; inset: 0; margin: 0; }

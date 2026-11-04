@@ -188,21 +188,24 @@ test("parseRetirement finds inputs by label and keeps their rows", () => {
   assert.equal(r.values.counted, "Liquid");
   assert.equal(r.rows.monthly, 12);
   assert.equal(parseRetirement([]).found, false);
+  assert.equal(parseRetirement([["Setting"], ["Real return after retirement", 0.02]]).values.returnPost, 0.02);
+  const renamed = parseRetirement([["Setting"], ["Real return before pension", 0.05], ["Real return after pension", 0.01]]).values;
+  assert.equal(renamed.returnPre, 0.05);
+  assert.equal(renamed.returnPost, 0.01);
 });
 
 test("retirementPlan matches the Retirement tab formulas", () => {
   const { values } = parseRetirement(RETIREMENT);
-  const p = retirementPlan(values, 116283);
-  // Values the sheet computed for the same inputs.
-  assert.equal(Math.round(p.needed), 716186);
-  assert.equal(Math.round(p.neededFuture), 851320);
-  assert.equal(Math.round(p.noNewMoney), 153020);
-  assert.equal(Math.round(p.perMonth), 5836);
-  assert.equal(Math.round(p.projected), 273652);
-  assert.equal(Math.round(p.supportedSpend), 1311);
-  assert.equal(Math.round(p.todaySpend), 599);
+  // Inputs and results copied from the sheet on 2026-11-04.
+  const v = { ...values, pension: 700, returnPre: 0.05, returnPost: 0.02, inflation: 0.03, monthly: 3000 };
+  const p = retirementPlan(v, 244199);
+  assert.equal(Math.round(p.needed), 806513);
+  assert.equal(Math.round(p.neededFuture), 991910);
+  assert.equal(Math.round(p.perMonth), 5105);
+  assert.equal(Math.round(p.projected), 615659);
+  assert.equal(Math.round(p.supportedSpend), 2371);
+  assert.equal(Math.round(p.todaySpend), 975);
   assert.equal(p.status, "Behind");
-  assert.ok(p.earliestAge > 50);
 });
 
 test("retirementPlan status bands", () => {
@@ -239,6 +242,20 @@ test("credentials accepts the private key however it was pasted", async () => {
     assert.doesNotThrow(() => createPrivateKey(c.key));
   }
   assert.throws(() => credentials(email, "nope"), /BEGIN PRIVATE KEY/);
+});
+
+test("retirementByAge matches the Retirement tab table", () => {
+  const { values } = parseRetirement(RETIREMENT);
+  const v = { ...values, pension: 700, returnPre: 0.05, returnPost: 0.02, inflation: 0.03, monthly: 3000 };
+  const plan = retirementPlan(v, 244199);
+  const at = (age) => plan.byAge.find((r) => r.age === age);
+  // Values the sheet computed for the same inputs.
+  assert.equal(Math.round(at(43).needed), 937627);
+  assert.equal(Math.round(at(50).portfolio), 615659);
+  assert.equal(Math.round(at(52).spend), 2906);
+  assert.equal(Math.round(at(53).portfolio), 802999);
+  assert.equal(plan.earliestAge, 53);
+  assert.equal(plan.byAge.at(-1).age, 84);
 });
 
 test("sameTransaction compares columns A to I only", async () => {
