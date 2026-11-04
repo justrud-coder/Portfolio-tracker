@@ -1,7 +1,7 @@
 // Keeps the app shell on the phone so it opens without a connection.
 // Shell files are network-first (so updates arrive on the next open) with the
 // cache as fallback. Google API calls are never cached here.
-const CACHE = "pt-shell-v19";
+const CACHE = "pt-shell-v20";
 const SHELL = [
   "./",
   "index.html",

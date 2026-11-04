@@ -437,3 +437,48 @@ test("pointsInRange cuts to the range, keeping at least two points", () => {
   const daily = ["2026-10-03", "2026-10-04", "2026-10-05", "2026-11-04"].map((date) => ({ date }));
   assert.deepEqual(pointsInRange(daily, "1m").map((p) => p.date), ["2026-10-04", "2026-10-05", "2026-11-04"]);
 });
+
+import { incomeRow, parseIncome, savedBy, savingsByMonth } from "../app/js/model.js";
+
+test("savedBy counts deposits, withdrawals and III pillar buys, not IBKR trades or starting positions", () => {
+  assert.equal(savedBy(["2026-11-04", "Rent cash", "DEPOSIT", "", "", "", "", 650, ""]), 650);
+  assert.equal(savedBy(["2026-11-04", "Cash", "WITHDRAWAL", "", "", "", "", 200, ""]), -200);
+  assert.equal(savedBy(["2026-11-04", "III pillar", "BUY", "ARTEA", 100, 0.7, "", "", ""]), 70);
+  assert.equal(savedBy(["2026-11-04", "IBKR", "BUY", "VWCE.DE", 1, 110, "", "", ""]), null);
+  assert.equal(savedBy(["2026-11-04", "Vinted options", "BUY", "VINTED", 10, "", "", "", ""]), null);
+  assert.equal(savedBy(["2026-06-30", "III pillar", "BUY", "ARTEA", 100, 0.7, "", "", "Starting position at…"]), null);
+  assert.equal(savedBy(["", "IBKR", "DEPOSIT", "CASH", "", "", "", 100, ""]), null);
+});
+
+test("parseIncome and incomeRow", () => {
+  const grid = [["Date", "Source", "Amount (EUR)", "Note"], [46330, "Salary", 4000, ""], ["", "", "", ""], ["2026-11-20", "Bonus", "€1,000", "Q3"]];
+  const inc = parseIncome(grid);
+  assert.equal(inc.length, 2);
+  assert.equal(inc[0].date, "2026-11-04");
+  assert.equal(inc[1].amount, 1000);
+  assert.deepEqual(incomeRow({ date: "2026-11-04", source: "Salary", amount: "4000,5" }).row, ["2026-11-04", "Salary", 4000.5, ""]);
+  assert.equal(incomeRow({ date: "2026-11-04", amount: "0" }).row, undefined);
+});
+
+test("savingsByMonth gives the rate per month and the average over months with income", () => {
+  const tx = [
+    { cells: ["2026-10-02", "Cash", "DEPOSIT", "", "", "", "", 1000, ""] },
+    { cells: ["2026-11-03", "IBKR", "DEPOSIT", "CASH", "", "", "", 1500, ""] },
+    { cells: ["2026-11-03", "IBKR", "BUY", "VWCE.DE", 10, 110, "", "", ""] },
+    { cells: ["2026-11-04", "Cash", "WITHDRAWAL", "", "", "", "", 500, ""] },
+    { cells: ["2025-01-04", "Cash", "DEPOSIT", "", "", "", "", 999, ""] },
+  ];
+  const income = [
+    { date: "2026-10-25", amount: 4000 },
+    { date: "2026-11-25", amount: 3000 },
+    { date: "2026-11-28", amount: 1000 },
+  ];
+  const s = savingsByMonth(tx, income, "2026-11-04", 3);
+  assert.deepEqual(s.months.map((m) => m.month), ["2026-09", "2026-10", "2026-11"]);
+  assert.equal(s.months[0].rate, null);
+  assert.equal(s.months[1].rate, 0.25);
+  assert.equal(s.months[2].saved, 1000);
+  assert.equal(s.months[2].rate, 0.25);
+  assert.equal(s.average, 2000 / 8000);
+  assert.equal(s.monthsWithIncome, 2);
+});
