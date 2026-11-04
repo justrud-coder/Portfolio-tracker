@@ -191,6 +191,7 @@ test("countedValue picks liquid, options or total", () => {
   assert.equal(countedValue(accounts, "Liquid"), 36944 + 13039);
   assert.equal(countedValue(accounts, "Liquid + options"), 36944 + 13039 + 58303);
   assert.equal(countedValue(accounts, "Total"), 36944 + 13039 + 58303);
+});
 
 test("credentials accepts the private key however it was pasted", async () => {
   const { generateKeyPairSync, createPrivateKey } = await import("node:crypto");
