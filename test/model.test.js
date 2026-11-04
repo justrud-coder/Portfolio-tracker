@@ -301,7 +301,7 @@ test("overview changes, account groups, new-total deposits and repeats", async (
     [
       { name: "IBKR", assetClass: "Stocks", valuation: "holdings", active: true, value: 150 },
       { name: "Cash", assetClass: "Cash", valuation: "manual", active: true, value: 10, lastSnapshot: "2026-10-05", gain: null },
-      { name: "Indeliai", assetClass: "Cash", valuation: "manual", active: true, value: 20, lastSnapshot: "2026-10-05", gain: null },
+      { name: "Deposit", assetClass: "Cash", valuation: "manual", active: true, value: 20, lastSnapshot: "2026-10-05", gain: null },
       { name: "III pillar", assetClass: "Pension", valuation: "holdings", active: true, value: 7 },
     ],
     [
@@ -310,15 +310,29 @@ test("overview changes, account groups, new-total deposits and repeats", async (
       { position: "IBKR", symbol: "OLD", name: "Sold", units: 0, value: 0 },
       { position: "III pillar", symbol: "ARTEA-AA16", name: "Artea Ambicingas Active 16+", units: 10, value: 7, gain: null },
     ],
-    [{ cells: [46330 /* 2026-11-04 */, "Indeliai", "DEPOSIT", "", "", "", "", 5] }],
+    [{ cells: [46330 /* 2026-11-04 */, "Deposit", "DEPOSIT", "", "", "", "", 5] }],
+    [
+      { date: "2025-10-05", account: "Deposit", value: 16 },
+      { date: "2025-11-05", account: "Deposit", value: 1 },
+      { date: "2025-11-04", account: "III pillar", value: 5 },
+    ],
+    "2026-11-04",
   );
   assert.deepEqual(og.map((g) => [g.name, g.total, g.items.map((i) => i.name)]), [
     ["Stocks", 100, ["Vanguard"]],
-    ["Cash", 80, ["IBKR cash", "Indeliai", "Cash"]],
+    ["Cash", 80, ["IBKR cash", "Deposit", "Cash"]],
     ["III pillar pension", 7, ["Artea Ambicingas Active 16+"]],
   ]);
-  assert.equal(og[1].items.find((i) => i.name === "Indeliai").updated, "2026-11-04");
+  assert.equal(og[1].items.find((i) => i.name === "Deposit").updated, "2026-11-04");
   assert.equal(og[1].items.find((i) => i.name === "Cash").updated, "2026-10-05");
+  // A year back from 4 Nov 2026: the last snapshot on or before 4 Nov 2025.
+  assert.deepEqual(og[1].items.find((i) => i.name === "Deposit").change, { value: 4, pct: 0.25, from: "2025-10-05", basis: "year" });
+  assert.equal(og[1].items.find((i) => i.name === "Cash").change, null);
+  assert.equal(og[1].items.find((i) => i.name === "IBKR cash").change, null);
+  // A holdings account's only holding uses the account's history...
+  assert.deepEqual(og[2].items[0].change, { value: 2, pct: 0.4, from: "2025-11-04", basis: "year" });
+  // ...and IBKR stocks, with no history of their own, show the gain against cost.
+  assert.deepEqual(og[0].items[0].change, { value: 5, pct: 0.05, basis: "cost" });
 
   assert.deepEqual(m.moveToTotal(3500, 4200), { type: "DEPOSIT", amount: 700 });
   assert.deepEqual(m.moveToTotal(3500, 3000.5), { type: "WITHDRAWAL", amount: 499.5 });
