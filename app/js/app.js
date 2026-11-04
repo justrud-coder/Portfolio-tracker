@@ -511,7 +511,7 @@ function retireSummary(v, plan) {
 }
 
 // What-if sliders: each drives the matching field in "Your plan". Nothing is
-// saved until "Save to sheet"; "Reset" puts the saved values back.
+// saved until "Save"; "Reset" puts the saved values back.
 const WHAT_IF = [
   { key: "monthly", label: "Investing", step: 100, range: (s) => [0, Math.max(10000, Math.ceil((s.monthly * 2) / 1000) * 1000)], show: (x) => `${eur(x)}/mo` },
   { key: "retireAge", label: "Retire at", step: 1, range: (s) => [Math.ceil(s.currentAge) + 1, Math.max(Math.ceil(s.currentAge) + 1, s.endAge - 1)], show: (x) => `age ${x}` },
@@ -530,7 +530,7 @@ function whatIfCard(saved) {
         const [min, max] = w.range(saved);
         return `<label class="slider"><span class="slider-head"><span>${esc(w.label)}</span><span class="num" id="wi-${w.key}"></span></span><input type="range" name="wi-${w.key}" data-key="${w.key}" min="${min}" max="${max}" step="${w.step}" value="${esc(toSlider(w.key, saved[w.key]))}"></label>`;
       }).join("")}
-      <p class="small muted" id="whatIfNote">Drag to try a different plan. Nothing is saved unless you tap Save to sheet.</p>
+      <p class="small muted" id="whatIfNote">Drag to try a different plan. Nothing is saved unless you tap Save.</p>
     </section>`;
 }
 
@@ -574,7 +574,7 @@ function renderRetire(root) {
           ${RETIRE_FIELDS.map((f) => `<label class="field">${esc(f.label)}<input name="${f.key}" inputmode="decimal" autocomplete="off" value="${esc(show(f, r.values[f.key]))}"></label>`).join("")}
         </div>
         <ul class="errors" id="retireErrors"></ul>
-        <button class="btn" id="retireSave">Save to sheet</button>
+        <button class="btn" id="retireSave">Save</button>
       </form>
     </section>`;
 
@@ -614,8 +614,8 @@ function renderRetire(root) {
     const changed = changedInputs(r.values, v);
     $("#whatIfReset").disabled = !changed.length;
     $("#whatIfNote").textContent = changed.length
-      ? "Trying a different plan. Tap Save to sheet to keep it, or Reset to go back."
-      : "Drag to try a different plan. Nothing is saved unless you tap Save to sheet.";
+      ? "Trying a different plan. Tap Save to keep it, or Reset to go back."
+      : "Drag to try a different plan. Nothing is saved unless you tap Save.";
     $("#retireErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
     return { v, errors };
   };
@@ -655,7 +655,7 @@ function renderRetire(root) {
       if (err instanceof AuthError) needSignIn();
       else showBanner(esc(err.message || String(err)), "error");
       btn.disabled = false;
-      btn.textContent = "Save to sheet";
+      btn.textContent = "Save";
     }
   };
 }
