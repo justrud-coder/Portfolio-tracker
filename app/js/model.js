@@ -929,3 +929,159 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
 
   return { base, deposit, classes, outside, stocks, stockMoney, hasStockTargets, reachAll };
 }
+
+// ---------- plan vs actual ----------
+
+/** Portfolio value a Monthly row holds for the plan's "Portfolio counted" setting. */
+export function countedSnapshot(m, mode) {
+  const liquid = m.parts?.["Liquid (all)"];
+  if (mode === "Total" || liquid === undefined) return m.total;
+  if (mode === "Liquid + options") return liquid + (m.parts?.Options ?? 0);
+  return liquid;
+}
+
+const MONTH_DAYS = 365.25 / 12;
+const isStart = (note) => /^starting position/i.test(String(note ?? "").trim());
+
+/**
+ * New money put in between `from` (exclusive) and `to` (inclusive): deposits
+ * minus withdrawals on any account, plus III pillar contributions (fund units
+ * bought or sold there). Starting-position rows are left out.
+ */
+export function netInvested(transactions, from, to) {
+  let sum = 0;
+  for (const t of transactions) {
+    const [date, account, type, , units, price, , cash, note] = t.cells ?? t;
+    const iso = serialToIso(date);
+    if (!iso || iso <= from || iso > to || isStart(note)) continue;
+    if (type === "DEPOSIT") sum += num(cash) ?? 0;
+    else if (type === "WITHDRAWAL") sum -= num(cash) ?? 0;
+    else if (account === PENSION && (type === "BUY" || type === "SELL")) {
+      const v = (num(units) ?? 0) * (num(price) ?? 0);
+      sum += type === "BUY" ? v : -v;
+    }
+  }
+  return sum;
+}
+
+/** First day new money was recorded (a dated deposit, withdrawal or III pillar contribution). */
+export function investTrackingStart(transactions) {
+  let first = null;
+  for (const t of transactions) {
+    const [date, account, type, , , , , , note] = t.cells ?? t;
+    const iso = serialToIso(date);
+    const counts = type === "DEPOSIT" || type === "WITHDRAWAL" || (account === PENSION && (type === "BUY" || type === "SELL"));
+    if (iso && counts && !isStart(note) && (!first || iso < first)) first = iso;
+  }
+  return first;
+}
+
+/**
+ * Growth the plan expects from a start value over `months`: the nominal
+ * return before retirement on the value, plus the fixed monthly investment
+ * (added at each month end, earning the same return).
+ */
+export function planGrowth(p, start, months) {
+  const i = nominalMonthly(p);
+  const g = (1 + i) ** months;
+  const invested = p.monthly * months;
+  const total = start * (g - 1) + p.monthly * (i === 0 ? months : (g - 1) / i);
+  return { total, invested, returns: total - invested };
+}
+
+/** Last point of each calendar period (`len` 7 = month, 4 = year), oldest first. */
+function periodEnds(points, len) {
+  const out = [];
+  for (const pt of points) {
+    const last = out[out.length - 1];
+    if (last && last.date.slice(0, len) === pt.date.slice(0, len)) out[out.length - 1] = pt;
+    else out.push(pt);
+  }
+  return out;
+}
+
+/**
+ * Plan vs actual growth of the counted portfolio, from the Monthly snapshots
+ * (plus today's live value when it's newer than the last snapshot).
+ *
+ * - `perMonth` / `perYear`: what the plan expects from today's value over the
+ *   next month and year, split into the return and the money invested.
+ * - `months` / `years`: one row per calendar month and year, newest first,
+ *   from the previous period's last snapshot to this period's last snapshot.
+ *   `plan` scales with the days in between, so gaps in the history compare
+ *   fairly. `invested` is null before new money was recorded on the
+ *   Transactions tab, and `partial` marks the period recording started in.
+ * - `last12`: change since the snapshot closest to a year ago, against the plan
+ *   for the same stretch.
+ * Matches the Plan vs actual tab of the sheet.
+ */
+export function planVsActual(p, monthly, transactions = [], { live = null, today = null } = {}) {
+  const points = monthly.map((m) => ({ date: m.date, value: countedSnapshot(m, p.counted) }));
+  if (live !== null && today && (!points.length || today > points[points.length - 1].date)) points.push({ date: today, value: live });
+  const now = points[points.length - 1] ?? null;
+  const value = now?.value ?? live ?? 0;
+  const tracking = investTrackingStart(transactions);
+  const rows = (len) => {
+    const ends = periodEnds(points, len);
+    const out = [];
+    for (let k = ends.length - 1; k >= 1; k--) {
+      const a = ends[k - 1];
+      const b = ends[k];
+      const months = (dayNumber(b.date) - dayNumber(a.date)) / MONTH_DAYS;
+      const plan = planGrowth(p, a.value, months);
+      const counted = tracking !== null && b.date >= tracking;
+      out.push({
+        period: b.date.slice(0, len),
+        from: a.date,
+        to: b.date,
+        start: a.value,
+        end: b.value,
+        months,
+        actual: b.value - a.value,
+        plan: plan.total,
+        planInvested: plan.invested,
+        diff: b.value - a.value - plan.total,
+        invested: counted ? netInvested(transactions, a.date, b.date) : null,
+        partial: counted && a.date < tracking,
+      });
+    }
+    return out;
+  };
+
+  let last12 = null;
+  if (now) {
+    const yearAgo = addMonths(now.date, -12);
+    const cutoff = addMonths(now.date, -6);
+    const gap = (d) => Math.abs(dayNumber(d) - dayNumber(yearAgo));
+    let base = null;
+    for (const pt of points) if (pt.date <= cutoff && (!base || gap(pt.date) < gap(base.date))) base = pt;
+    if (base) {
+      const months = (dayNumber(now.date) - dayNumber(base.date)) / MONTH_DAYS;
+      const plan = planGrowth(p, base.value, months);
+      const counted = tracking !== null;
+      last12 = {
+        from: base.date,
+        to: now.date,
+        months,
+        actual: now.value - base.value,
+        plan: plan.total,
+        planInvested: plan.invested,
+        diff: now.value - base.value - plan.total,
+        invested: counted ? netInvested(transactions, base.date, now.date) : null,
+        partial: counted && base.date < tracking,
+      };
+    }
+  }
+
+  return {
+    value,
+    asOf: now?.date ?? null,
+    rate: (1 + p.returnPre) * (1 + p.inflation) - 1,
+    perMonth: planGrowth(p, value, 1),
+    perYear: planGrowth(p, value, 12),
+    months: rows(7),
+    years: rows(4),
+    last12,
+    tracking,
+  };
+}
