@@ -19,7 +19,6 @@ import {
   parseHoldings,
   parseLists,
   parseMonthly,
-  planSnapshot,
   summarize,
   transactionRow,
   transactionValue,
@@ -233,11 +232,13 @@ function render() {
   $("#tabs").hidden = false;
   // "goals" was the old goals tab; the retirement plan is the Goals tab now.
   if (state.view === "goals") state.view = "retire";
+  // The Snapshot tab was replaced by the monthly snapshot job.
+  if (state.view === "snapshot") state.view = "home";
   for (const b of $("#tabs").querySelectorAll("button")) {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
+  const views = { home: renderHome, retire: renderRetire, add: renderAdd };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -247,7 +248,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", retire: "Goals", add: "New Transaction", snapshot: "Snapshot" };
+const TITLES = { home: "Portfolio", retire: "Goals", add: "New Transaction" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -812,105 +813,6 @@ async function deleteTransaction(t) {
   const tab = meta.tabs.Transactions;
   if (!tab) throw new Error("The sheet has no Transactions tab.");
   await sheets.deleteRow(tab, t.row);
-}
-
-// ---------- monthly snapshot ----------
-
-function renderSnapshot(root) {
-  const d = state.data;
-  const accounts = d.accounts.filter((a) => a.active);
-  const lastDate = d.monthly[d.monthly.length - 1]?.date ?? "";
-
-  root.innerHTML = `
-    <section class="card">
-      <h2>Monthly snapshot</h2>
-      <p class="small muted" style="margin-top:-4px">Saves one value per account to the History tab. Accounts priced from holdings are filled in with today's live value. ${
-        lastDate ? `Last snapshot: ${shortDate(lastDate)}.` : ""
-      }</p>
-      <form id="snap" novalidate>
-        <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
-        <div id="snapRows">
-          ${accounts
-            .map(
-              (a, i) => `
-            <div class="snap-row">
-              <div><div>${esc(a.name)}</div><div class="meta">${
-                a.valuation === "holdings" ? "Live value from prices" : a.lastSnapshot ? `Last: ${eur(a.value)} on ${shortDate(a.lastSnapshot)}` : "No earlier value"
-              }</div></div>
-              <input name="v${i}" inputmode="decimal" autocomplete="off" value="${Math.round(a.value * 100) / 100}" aria-label="${esc(a.name)} value in euros">
-            </div>`,
-            )
-            .join("")}
-        </div>
-        <div class="total-line"><span>Total</span><span class="num" id="snapTotal"></span></div>
-        <div class="preview" id="snapPreview"></div>
-        <ul class="errors" id="snapErrors"></ul>
-        <button class="btn" id="snapSave">Save snapshot</button>
-      </form>
-    </section>`;
-
-  const form = $("#snap");
-  const read = () => {
-    const f = new FormData(form);
-    const values = [];
-    const errors = [];
-    accounts.forEach((a, i) => {
-      const raw = String(f.get(`v${i}`) ?? "").trim();
-      if (raw === "") return;
-      const v = num(raw.replace(",", "."));
-      if (v === null) errors.push(`${a.name}: "${raw}" isn't a number.`);
-      else values.push({ account: a.name, value: v });
-    });
-    return { date: f.get("date"), values, errors };
-  };
-  const sync = () => {
-    const { date, values } = read();
-    const total = values.reduce((s, v) => s + v.value, 0);
-    $("#snapTotal").textContent = eur(total);
-    const prev = d.monthly.filter((m) => m.date < date).pop();
-    const same = d.monthly.find((m) => m.date === date);
-    let msg = "";
-    if (prev) msg = `${signedEur(total - prev.total)} (${signedPct(prev.total ? (total - prev.total) / prev.total : null)}) vs ${shortDate(prev.date)}.`;
-    if (same) msg += ` A snapshot for ${shortDate(date)} exists and will be overwritten.`;
-    $("#snapPreview").innerHTML = msg.replace(/^([+−][^ ]+)/, (m) => `<span class="${m.startsWith("+") ? "up" : "down"}">${m}</span>`);
-  };
-  form.addEventListener("input", sync);
-  sync();
-
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const { date, values, errors } = read();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.push("Pick a date.");
-    if (!values.length) errors.push("Enter at least one value.");
-    $("#snapErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
-    if (errors.length) return;
-    if (lastDate && date < lastDate && !confirm(`${shortDate(date)} is before the last snapshot (${shortDate(lastDate)}). Save anyway?`)) return;
-    const btn = $("#snapSave");
-    btn.disabled = true;
-    btn.textContent = "Saving…";
-    try {
-      const plan = await saveSnapshot(date, values);
-      showBanner(`Saved snapshot for ${shortDate(date)}: ${plan.updates.length} accounts${plan.appended < plan.updates.length ? `, ${plan.updates.length - plan.appended} overwritten` : ""}.`, "ok");
-      await load({ quiet: true });
-    } catch (err) {
-      if (err instanceof AuthError) needSignIn();
-      else showBanner(esc(err.message || String(err)), "error");
-      btn.disabled = false;
-      btn.textContent = "Save snapshot";
-    }
-  };
-}
-
-async function saveSnapshot(date, values) {
-  const [grid] = await sheets.batchGet([RANGES.history]);
-  const history = parseHistory(grid);
-  const plan = planSnapshot(date, values, history, nextFreeRow(grid));
-  const meta = await freshMeta();
-  const tab = meta.tabs.History;
-  if (!tab) throw new Error("The sheet has no History tab.");
-  await sheets.ensureRows(tab, plan.lastRow);
-  await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
-  return plan;
 }
 
 // ---------- boot ----------

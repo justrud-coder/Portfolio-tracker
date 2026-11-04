@@ -249,3 +249,18 @@ test("sameTransaction compares columns A to I only", async () => {
   assert.equal(sameTransaction(row, [46330, "IBKR", "SELL", "CASH", 1, 840]), false);
   assert.equal(sameTransaction(undefined, row), false);
 });
+
+test("monthly snapshot saves active accounts on the Vilnius date", async () => {
+  const { snapshotValues, todayVilnius } = await import("../scripts/snapshot.mjs");
+  assert.equal(todayVilnius(new Date("2026-11-30T22:30:00Z")), "2026-12-01");
+  assert.equal(todayVilnius(new Date("2026-12-01T06:00:00Z")), "2026-12-01");
+  const accounts = [
+    { name: "IBKR", active: true, value: 44943.456 },
+    { name: "Crypto", active: false, value: 0 },
+    { name: "Cash", active: true, value: 3500 },
+  ];
+  assert.deepEqual(snapshotValues(accounts), [
+    { account: "IBKR", value: 44943.46 },
+    { account: "Cash", value: 3500 },
+  ]);
+});

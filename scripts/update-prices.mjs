@@ -5,7 +5,7 @@ import { createSign } from "node:crypto";
 import { fetchQuotes, priceUpdates } from "./prices.mjs";
 
 // The "Portfolio tracker" sheet. Override with the SHEET_ID environment variable.
-const DEFAULT_SHEET_ID = "1TtvBSaAhSnduHRo9hwwuhxKZTLcPnm2EqHr76pMd0vM";
+export const DEFAULT_SHEET_ID = "1TtvBSaAhSnduHRo9hwwuhxKZTLcPnm2EqHr76pMd0vM";
 const TAB = "Holdings";
 
 function env(name) {
@@ -64,10 +64,10 @@ async function accessToken() {
   return (await res.json()).access_token;
 }
 
-async function main() {
-  const sheetId = process.env.SHEET_ID || DEFAULT_SHEET_ID;
+/** Sign in as the service account and return a small Sheets API caller. */
+export async function sheetsClient(sheetId) {
   const token = await accessToken();
-  const api = async (path, init = {}) => {
+  return async (path, init = {}) => {
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -75,6 +75,10 @@ async function main() {
     if (!res.ok) throw new Error(`Google Sheets API ${res.status}: ${await res.text()}`);
     return res.json();
   };
+}
+
+async function main() {
+  const api = await sheetsClient(process.env.SHEET_ID || DEFAULT_SHEET_ID);
 
   const { values: grid = [] } = await api(`/values/${encodeURIComponent(`${TAB}!A1:Z300`)}?valueRenderOption=UNFORMATTED_VALUE`);
   const header = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
