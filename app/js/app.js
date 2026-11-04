@@ -479,8 +479,7 @@ function retireSummary(v, plan) {
     <section class="card goal">
       <h2>The numbers</h2>
       <dl class="figs">
-        <div><dt>Needed at ${esc(v.retireAge)} (${retireYear(plan)} euros)</dt><dd class="num">${eur(plan.neededFuture)}</dd></div>
-        <div><dt>Same, in today's money</dt><dd class="num">${eur(plan.needed)}</dd></div>
+        <div><dt>Amount needed at year ${retireYear(plan)}</dt><dd class="num">${eur(plan.neededFuture)}</dd></div>
         <div><dt>Counted now (${esc(v.counted.toLowerCase())})</dt><dd class="num">${eur(plan.counted)}</dd></div>
         <div><dt>At ${esc(v.retireAge)} with no new money (${retireYear(plan)} euros)</dt><dd class="num">${eur(plan.noNewMoneyFuture)}</dd></div>
       </dl>
