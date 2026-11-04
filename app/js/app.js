@@ -411,7 +411,7 @@ const RETIRE_FIELDS = [
   { key: "retireAge", label: "Retire at age", kind: "age" },
   { key: "endAge", label: "Plan until age", kind: "age" },
   { key: "pensionAge", label: "Pension from age", kind: "age" },
-  { key: "spend", label: "Spend (€/month)", kind: "eur" },
+  { key: "spend", label: "Spend (€/month, today's value)", kind: "eur" },
   { key: "pension", label: "Pension (€/month)", kind: "eur" },
   { key: "monthly", label: "Investing (€/month)", kind: "eur" },
   { key: "returnPre", label: "Real return before pension (%)", kind: "pct" },
