@@ -254,15 +254,31 @@ function changeNear(monthly, total, target, today) {
   return { value, pct: base.total ? value / base.total : null, from: base.date };
 }
 
+/** Last day of the month before `iso`'s month. */
+export function endOfPreviousMonth(iso) {
+  const [y, m] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 0)).toISOString().slice(0, 10);
+}
+
+/** Change of `total` since the last snapshot on or before `date`. */
+function changeSince(monthly, total, date) {
+  let base = null;
+  for (const m of monthly) if (m.date <= date) base = m;
+  if (!base) return { value: null, pct: null, from: null };
+  const value = total - base.total;
+  return { value, pct: base.total ? value / base.total : null, from: base.date };
+}
+
 /**
- * Change over the last month (against the snapshot closest to the same day
- * last month) and year to date (against the snapshot closest to 1 January).
+ * Change this month (against the last snapshot on or before the last day of
+ * the previous month) and year to date (against the snapshot closest to
+ * 31 December of the previous year, since older history isn't daily).
  */
 export function periodChanges(monthly, total, today) {
-  const year = today.slice(0, 4);
+  const year = Number(today.slice(0, 4));
   return {
-    month: changeNear(monthly, total, addMonths(today, -1), today),
-    ytd: changeNear(monthly, total, `${year}-01-01`, today),
+    month: changeSince(monthly, total, endOfPreviousMonth(today)),
+    ytd: changeNear(monthly, total, `${year - 1}-12-31`, today),
   };
 }
 
