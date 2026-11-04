@@ -707,6 +707,8 @@ export function retirementPlan(p, counted) {
     years,
     needed,
     neededFuture: needed * (1 + p.inflation) ** years,
+    projectedFuture: projected * (1 + p.inflation) ** years,
+    noNewMoneyFuture: noNewMoney * (1 + p.inflation) ** years,
     counted,
     noNewMoney,
     perMonth,
@@ -723,7 +725,8 @@ export function retirementPlan(p, counted) {
 /**
  * One row per possible retirement age, from now until the plan ends: what the
  * portfolio would be at that age with the current monthly investment, what is
- * needed to retire then, and the monthly spend it would pay. Today's money.
+ * needed to retire then, and the monthly spend it would pay. Today's money,
+ * with the portfolio and need also in the euros of that year (…Future).
  * Matches the table on the Retirement tab.
  */
 export function retirementByAge(p, counted) {
@@ -731,7 +734,16 @@ export function retirementByAge(p, counted) {
   for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
     const portfolio = grow(p, counted, p.monthly, (age - p.currentAge) * 12);
     const needed = neededAt(p, age);
-    out.push({ age, portfolio, needed, spend: spendFrom(p, portfolio, age), canRetire: portfolio >= needed });
+    const toFuture = (1 + p.inflation) ** (age - p.currentAge);
+    out.push({
+      age,
+      portfolio,
+      needed,
+      portfolioFuture: portfolio * toFuture,
+      neededFuture: needed * toFuture,
+      spend: spendFrom(p, portfolio, age),
+      canRetire: portfolio >= needed,
+    });
   }
   return out;
 }

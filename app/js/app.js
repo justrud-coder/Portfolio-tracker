@@ -424,6 +424,9 @@ const RETIRE_FIELDS = [
 
 const STATUS_TONE = { Ahead: "up", "On track": "up", Behind: "down" };
 
+const thisYear = () => new Date().getFullYear();
+const retireYear = (plan) => thisYear() + plan.years;
+
 function progressBar(share, caption, label) {
   const p = Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : 0;
   return `<div class="progress" role="progressbar" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><div style="width:${(p * 100).toFixed(1)}%"></div></div>
@@ -442,9 +445,10 @@ function retireSummary(v, plan) {
     <section class="card hero">
       <div class="label">Retire at ${esc(v.retireAge)} on ${eur(v.spend)}/month</div>
       <div class="value ${t}">${esc(plan.status)}</div>
-      <div class="sub">Need <span class="num">${eur(plan.needed)}</span> at ${esc(v.retireAge)}. Investing ${eur(v.monthly)}/month gets you to <span class="num">${eur(plan.projected)}</span>.</div>
+      <div class="sub">Need <span class="num">${eur(plan.neededFuture)}</span> at ${esc(v.retireAge)}. Investing ${eur(v.monthly)}/month gets you to <span class="num">${eur(plan.projectedFuture)}</span>.</div>
+      <div class="sub muted">In ${retireYear(plan)} euros.</div>
       ${progressBar(plan.progress, `Projected at ${esc(v.retireAge)}: <span class="num">${pct(plan.progress)}</span> of the target`, "Projected vs needed")}
-      ${progressBar(plan.counted / plan.needed, `Today: <span class="num">${eur(plan.counted)}</span>, <span class="num">${pct(plan.counted / plan.needed)}</span> of the target`, "Today vs needed")}
+      ${progressBar(plan.counted / plan.needed, `Today: <span class="num">${eur(plan.counted)}</span>, <span class="num">${pct(plan.counted / plan.needed)}</span> of the target in today's money (<span class="num">${eur(plan.needed)}</span>)`, "Today vs needed")}
     </section>
 
     <section class="stats">
@@ -475,12 +479,11 @@ function retireSummary(v, plan) {
     <section class="card goal">
       <h2>The numbers</h2>
       <dl class="figs">
-        <div><dt>Needed at ${esc(v.retireAge)}</dt><dd class="num">${eur(plan.needed)}</dd></div>
-        <div><dt>Same, in ${new Date().getFullYear() + plan.years} euros</dt><dd class="num">${eur(plan.neededFuture)}</dd></div>
+        <div><dt>Amount needed at year ${retireYear(plan)}</dt><dd class="num">${eur(plan.neededFuture)}</dd></div>
         <div><dt>Counted now (${esc(v.counted.toLowerCase())})</dt><dd class="num">${eur(plan.counted)}</dd></div>
-        <div><dt>At ${esc(v.retireAge)} with no new money</dt><dd class="num">${eur(plan.noNewMoney)}</dd></div>
+        <div><dt>At ${esc(v.retireAge)} with no new money (${retireYear(plan)} euros)</dt><dd class="num">${eur(plan.noNewMoneyFuture)}</dd></div>
       </dl>
-      <p class="small muted" style="margin:6px 0 0">All amounts are in today's money, except the monthly investment, which is a fixed amount. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
+      <p class="small muted" style="margin:6px 0 0">Targets and portfolio values are in the euros of the year you'd retire. Spending and pension are in today's money and rise with inflation; the monthly investment is a fixed amount. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
     </section>`;
 }
 
@@ -493,10 +496,10 @@ function byAgeCard(v, plan) {
       <ul class="list">${rows
         .map((r) => {
           const mark = r.age === plan.earliestAge ? " · earliest" : r.age === v.retireAge ? " · your goal" : "";
-          return `<li><div class="row${r.age === plan.earliestAge ? " pick" : ""}"><div><div class="name">Age ${r.age}<span class="muted">${mark}</span></div><div class="meta num">Have ${eur(r.portfolio)} · need ${eur(r.needed)}</div></div><div class="right"><div class="num ${r.canRetire ? "up" : ""}">${eur(r.spend)}/mo</div><div class="small muted">${r.canRetire ? "Enough" : `${eur(r.needed - r.portfolio)} short`}</div></div></div></li>`;
+          return `<li><div class="row${r.age === plan.earliestAge ? " pick" : ""}"><div><div class="name">Age ${r.age}<span class="muted">${mark}</span></div><div class="meta num">Have ${eur(r.portfolioFuture)} · need ${eur(r.neededFuture)} (${thisYear() + r.age - v.currentAge})</div></div><div class="right"><div class="num ${r.canRetire ? "up" : ""}">${eur(r.spend)}/mo</div><div class="small muted">${r.canRetire ? "Enough" : `${eur(r.neededFuture - r.portfolioFuture)} short`}</div></div></div></li>`;
         })
         .join("")}</ul>
-      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Monthly spend each portfolio pays until ${esc(v.endAge)}, in today's money, if you keep investing ${eur(v.monthly)}/month until that age.</p>
+      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Have and need are in the euros of each year. The monthly spend each portfolio pays until ${esc(v.endAge)} is in today's money, if you keep investing ${eur(v.monthly)}/month until that age.</p>
     </section>`;
 }
 

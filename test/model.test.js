@@ -206,7 +206,13 @@ test("retirementPlan matches the Retirement tab formulas", () => {
   assert.equal(Math.round(p.supportedSpend), 2371);
   assert.equal(Math.round(p.todaySpend), 975);
   assert.equal(p.status, "Behind");
+  // The same target and projection in 2033 euros.
+  assert.equal(Math.round(p.projectedFuture), 757183);
+  assert.ok(Math.abs(p.noNewMoneyFuture - 343613 * 1.03 ** 7) < 2);
+  assert.equal(Math.round(plan53(v).neededFuture), Math.round(744514 * 1.03 ** 10));
 });
+
+const plan53 = (v) => retirementPlan(v, 244199).byAge.find((r) => r.age === 53);
 
 test("retirementPlan status bands", () => {
   const { values } = parseRetirement(RETIREMENT);
