@@ -123,6 +123,15 @@ export class Sheets {
     tab.rows = rows + 50;
   }
 
+  /** Delete one whole row (1-based) from a tab; the rows below move up. */
+  async deleteRow(tab, row) {
+    await this.call(`:batchUpdate`, {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ deleteDimension: { range: { sheetId: tab.id, dimension: "ROWS", startIndex: row - 1, endIndex: row } } }] }),
+    });
+    tab.rows -= 1;
+  }
+
   /** Write cells as if typed (dates in YYYY-MM-DD become dates; numbers stay numbers). */
   async write(data) {
     return this.call(`/values:batchUpdate`, {

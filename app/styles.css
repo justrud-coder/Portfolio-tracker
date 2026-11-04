@@ -213,6 +213,10 @@ main { padding: 0 16px 24px; max-width: 720px; margin: 0 auto; outline: none; }
 .row .name { font-weight: 400; }
 .row .meta { font-size: 13px; color: var(--muted); letter-spacing: -0.08px; margin-top: 1px; }
 .row .right { text-align: right; flex: none; }
+.del-btn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0 -4px 0 -4px; padding: 0; border: 0; background: none; color: var(--down); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.del-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.del-btn:active { opacity: 0.3; }
+.del-btn:disabled { opacity: 0.3; }
 details > summary { list-style: none; cursor: pointer; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary.row { padding-right: 36px; position: relative; }

@@ -214,3 +214,12 @@ test("credentials accepts the private key however it was pasted", async () => {
   }
   assert.throws(() => credentials(email, "nope"), /BEGIN PRIVATE KEY/);
 });
+
+test("sameTransaction compares columns A to I only", async () => {
+  const { sameTransaction } = await import("../app/js/model.js");
+  const row = [46330, "IBKR", "BUY", "CASH", 1, 840, "", "", "", 840];
+  assert.equal(sameTransaction([46330, "IBKR", "BUY", "CASH", "1", "840"], row.slice(0, 9)), true);
+  assert.equal(sameTransaction(row, [...row.slice(0, 9), 999]), true);
+  assert.equal(sameTransaction(row, [46330, "IBKR", "SELL", "CASH", 1, 840]), false);
+  assert.equal(sameTransaction(undefined, row), false);
+});

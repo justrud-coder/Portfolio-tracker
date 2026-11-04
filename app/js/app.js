@@ -6,6 +6,7 @@ import {
   countedValue,
   nextFreeRow,
   parseRetirement,
+  sameTransaction,
   retirementPlan,
   parseAccounts,
   parseHistory,
@@ -574,11 +575,31 @@ function renderAdd(root) {
               const v = transactionValue(c);
               return `<li><div class="row"><div><div class="name">${esc(c[2])} ${esc(c[3] || "")}</div><div class="meta">${esc(c[1])} · ${
                 serialToIso(c[0]) ? shortDate(serialToIso(c[0])) : "no date"
-              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div></div></li>`;
+              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
             })
             .join("")}</ul></section>`
         : ""
     }`;
+
+  for (const b of root.querySelectorAll(".del-btn")) {
+    b.onclick = async () => {
+      const t = d.transactions.find((x) => x.row === Number(b.dataset.row));
+      if (!t) return;
+      const c = t.cells;
+      const what = `${c[2]}${c[3] ? ` ${c[3]}` : ""} on ${c[1]}`;
+      if (!confirm(`Remove ${what} from the sheet? This deletes row ${t.row} of the Transactions tab.`)) return;
+      b.disabled = true;
+      try {
+        await deleteTransaction(t);
+        showBanner(`Removed ${esc(what)}.`, "ok");
+        await load({ quiet: true });
+      } catch (err) {
+        if (err instanceof AuthError) needSignIn();
+        else showBanner(esc(err.message || String(err)), "error");
+        b.disabled = false;
+      }
+    };
+  }
 
   const form = $("#tx");
   const sync = () => {
@@ -637,6 +658,19 @@ async function saveTransaction(row) {
   if (!tab) throw new Error("The sheet has no Transactions tab.");
   await sheets.ensureRows(tab, n);
   await sheets.write([{ range: `Transactions!A${n}:I${n}`, values: [row] }]);
+}
+
+async function deleteTransaction(t) {
+  // Re-read first: if the row has changed or moved since the list was drawn
+  // (another device edited the sheet), refuse rather than delete the wrong one.
+  const [grid] = await sheets.batchGet([RANGES.transactions]);
+  if (!sameTransaction(grid[t.row - 1], t.cells)) {
+    throw new Error("The Transactions tab changed since the app loaded it. Refresh and try again.");
+  }
+  const meta = await freshMeta();
+  const tab = meta.tabs.Transactions;
+  if (!tab) throw new Error("The sheet has no Transactions tab.");
+  await sheets.deleteRow(tab, t.row);
 }
 
 // ---------- monthly snapshot ----------
