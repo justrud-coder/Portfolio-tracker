@@ -297,14 +297,28 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   assert.equal(m.periodChanges(monthly.slice(0, 1), 250000, "2026-11-04").ytd.from, "2025-12-05");
   assert.equal(m.periodChanges([], 1, "2026-11-04").month.value, null);
 
-  const groups = m.groupAccounts([
-    { name: "Cash", assetClass: "Cash", active: true, value: 10 },
-    { name: "IBKR", assetClass: "Stocks", active: true, value: 5 },
-    { name: "III pillar", assetClass: "Pension", active: true, value: 7 },
-    { name: "Crypto", assetClass: "Crypto", active: false, value: 0 },
-    { name: "Vinted options", assetClass: "Options", active: true, value: 3 },
+  const og = m.overviewGroups(
+    [
+      { name: "IBKR", assetClass: "Stocks", valuation: "holdings", active: true, value: 150 },
+      { name: "Cash", assetClass: "Cash", valuation: "manual", active: true, value: 10, lastSnapshot: "2026-10-05", gain: null },
+      { name: "Indeliai", assetClass: "Cash", valuation: "manual", active: true, value: 20, lastSnapshot: "2026-10-05", gain: null },
+      { name: "III pillar", assetClass: "Pension", valuation: "holdings", active: true, value: 7 },
+    ],
+    [
+      { position: "IBKR", symbol: "VWCE.DE", name: "Vanguard", units: 1, value: 100, gain: 5, gainPct: 0.05 },
+      { position: "IBKR", symbol: "CASH", name: "Cash held at IBKR", units: 50, value: 50, gain: null },
+      { position: "IBKR", symbol: "OLD", name: "Sold", units: 0, value: 0 },
+      { position: "III pillar", symbol: "ARTEA-AA16", name: "Artea Ambicingas Active 16+", units: 10, value: 7, gain: null },
+    ],
+    [{ cells: [46330 /* 2026-11-04 */, "Indeliai", "DEPOSIT", "", "", "", "", 5] }],
+  );
+  assert.deepEqual(og.map((g) => [g.name, g.total, g.items.map((i) => i.name)]), [
+    ["Stocks", 100, ["Vanguard"]],
+    ["Cash", 80, ["IBKR cash", "Indeliai", "Cash"]],
+    ["III pillar pension", 7, ["Artea Ambicingas Active 16+"]],
   ]);
-  assert.deepEqual(groups.map((g) => [g.name, g.total]), [["Stocks", 5], ["Cash", 10], ["Options", 3], ["Pension", 7]]);
+  assert.equal(og[1].items.find((i) => i.name === "Indeliai").updated, "2026-11-04");
+  assert.equal(og[1].items.find((i) => i.name === "Cash").updated, "2026-10-05");
 
   assert.deepEqual(m.moveToTotal(3500, 4200), { type: "DEPOSIT", amount: 700 });
   assert.deepEqual(m.moveToTotal(3500, 3000.5), { type: "WITHDRAWAL", amount: 499.5 });

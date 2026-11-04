@@ -21,7 +21,7 @@ import {
   parseMonthly,
   summarize,
   periodChanges,
-  groupAccounts,
+  overviewGroups,
   moveToTotal,
   repeatForm,
   transactionRow,
@@ -284,6 +284,7 @@ function renderHome(root) {
   if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
 
   const changes = periodChanges(d.monthly, s.total, today);
+  const groups = overviewGroups(d.accounts, d.holdings, d.transactions);
   const changeTile = (label, c, fromWord) => `
       <div class="card stat">
         <div class="label">${label}</div>
@@ -315,15 +316,15 @@ function renderHome(root) {
 
     <section class="card">
       <h2>Allocation</h2>
-      ${donut(s.allocation)}
+      ${donut(groups.map((g) => ({ name: g.name, value: g.total })))}
     </section>
 
-    ${groupAccounts(d.accounts)
+    ${groups
       .map(
         (g) => `
     <section class="card">
       <div class="card-head"><h2>${esc(g.name)}</h2><span class="group-total num">${eur(g.total)}</span></div>
-      <ul class="list">${accountsList(d, g.accounts)}</ul>
+      <ul class="list">${groupItems(g.items)}</ul>
     </section>`,
       )
       .join("")}
@@ -356,7 +357,7 @@ function renderHome(root) {
 }
 
 // Fixed colours per group to match the coral theme, readable on light and dark.
-const GROUP_COLORS = { Stocks: "#e8475f", Cash: "#00a699", "Real estate": "#f26b3a", Options: "#8a5cf5", Pension: "#f5b400" };
+const GROUP_COLORS = { Stocks: "#e8475f", Cash: "#00a699", "Real estate": "#f26b3a", Options: "#8a5cf5", "III pillar pension": "#f5b400" };
 const SPARE_COLORS = ["#c13584", "#717171", "#b08968", "#3fa9f5"];
 
 /** Donut of each group's share of the total, with a legend. */
@@ -386,25 +387,19 @@ function donut(items) {
     </div>`;
 }
 
-function accountsList(d, accounts) {
-  return accounts
-    .map((a) => {
-      const holdings = d.holdings.filter((h) => h.position === a.name);
-      const right = `<div class="right"><div class="num">${eur(a.value)}</div>${
-        a.gain !== null ? `<div class="small ${tone(a.gain)} num">${signedEur(a.gain)} (${signedPct(a.gainPct)})</div>` : ""
-      }</div>`;
-      const meta = `${esc(a.assetClass)} · ${a.valuation === "holdings" ? "live prices" : a.lastSnapshot ? `as of ${shortDate(a.lastSnapshot)}` : "no snapshot"}`;
-      const head = `<div><div class="name">${esc(a.name)}</div><div class="meta">${meta}</div></div>${right}`;
-      if (!holdings.length) return `<li><div class="row">${head}</div></li>`;
-      return `<li><details><summary class="row">${head}</summary><ul class="sublist">${holdings
-        .map(
-          (h) => `<li><div><div>${esc(h.symbol)}</div><div class="meta small muted">${num(h.units)?.toLocaleString("en-GB", { maximumFractionDigits: 4 })} × ${
-            h.price === null ? "no price" : eurCents(h.price)
-          }${h.priceDate ? ` · ${shortDate(h.priceDate)}` : ""}</div></div><div class="right"><div class="num">${eur(h.value)}</div>${
-            h.gain !== null ? `<div class="small ${tone(h.gain)} num">${signedEur(h.gain)}</div>` : ""
-          }</div></li>`,
-        )
-        .join("")}</ul></details></li>`;
+/** Rows of an overview group: stocks and funds from holdings, and manual accounts. */
+function groupItems(items) {
+  return items
+    .map((i) => {
+      const gain = i.gain !== null && i.gain !== undefined ? `<div class="small ${tone(i.gain)} num">${signedEur(i.gain)}${i.gainPct !== null && i.gainPct !== undefined ? ` (${signedPct(i.gainPct)})` : ""}</div>` : "";
+      let meta;
+      if (i.kind === "holding") {
+        const h = i.holding;
+        meta = i.name === "IBKR cash" ? "IBKR" : `${num(h.units)?.toLocaleString("en-GB", { maximumFractionDigits: 4 })} × ${h.price === null ? "no price" : eurCents(h.price)}${h.priceDate ? ` · ${shortDate(h.priceDate)}` : ""}`;
+      } else {
+        meta = i.updated ? `as of ${shortDate(i.updated)}` : "no snapshot";
+      }
+      return `<li><div class="row"><div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div></div><div class="right"><div class="num">${eur(i.value)}</div>${gain}</div></div></li>`;
     })
     .join("");
 }

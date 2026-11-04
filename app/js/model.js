@@ -285,16 +285,54 @@ export function periodChanges(monthly, total, today) {
 /** Overview groups for the accounts list, in display order. */
 export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
 
-/** Active accounts grouped by asset class: the four main groups first, then any others. */
-export function groupAccounts(accounts) {
-  const groups = new Map(ACCOUNT_GROUPS.map((g) => [g, []]));
+/** Overview group names: asset classes shown under another name. */
+export const GROUP_NAMES = { Pension: "III pillar pension" };
+
+/**
+ * Overview groups. Accounts valued from holdings are replaced by their
+ * holdings (IBKR shows each stock; IBKR cash goes to Cash), and manual
+ * accounts carry the date they last changed: their snapshot or a later
+ * deposit or withdrawal.
+ */
+export function overviewGroups(accounts, holdings, transactions = []) {
+  const order = [...ACCOUNT_GROUPS, GROUP_NAMES.Pension];
+  const groups = new Map(order.map((g) => [g, []]));
+  const add = (cls, item) => {
+    const name = GROUP_NAMES[cls] ?? cls;
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(item);
+  };
+  const lastMove = new Map();
+  for (const t of transactions) {
+    const [date, account, type] = t.cells ?? t;
+    const iso = serialToIso(date);
+    if (!iso || (type !== "DEPOSIT" && type !== "WITHDRAWAL")) continue;
+    if (!lastMove.has(account) || iso > lastMove.get(account)) lastMove.set(account, iso);
+  }
   for (const a of accounts.filter((x) => x.active)) {
-    if (!groups.has(a.assetClass)) groups.set(a.assetClass, []);
-    groups.get(a.assetClass).push(a);
+    if (a.valuation === "holdings") {
+      for (const h of holdings.filter((x) => x.position === a.name)) {
+        if (!h.units && !h.value) continue;
+        const isCash = a.name === BROKER && h.symbol === BROKER_CASH;
+        add(isCash ? "Cash" : a.assetClass, {
+          kind: "holding",
+          name: isCash ? "IBKR cash" : h.name || h.symbol,
+          account: a.name,
+          holding: h,
+          value: h.value,
+          gain: isCash ? null : h.gain,
+          gainPct: isCash ? null : h.gainPct,
+        });
+      }
+    } else {
+      const moved = lastMove.get(a.name);
+      const updated = [a.lastSnapshot, moved].filter(Boolean).sort().pop() ?? null;
+      add(a.assetClass, { kind: "account", name: a.name, account: a.name, value: a.value, gain: a.gain, gainPct: a.gainPct, updated });
+    }
   }
   return [...groups.entries()]
     .filter(([, list]) => list.length)
-    .map(([name, list]) => ({ name, accounts: list.sort((a, b) => b.value - a.value), total: list.reduce((s, a) => s + a.value, 0) }));
+    .map(([name, items]) => ({ name, items: items.sort((x, y) => y.value - x.value), total: items.reduce((s, x) => s + x.value, 0) }));
 }
 
 /**
