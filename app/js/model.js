@@ -228,6 +228,84 @@ const rank = (order, name) => {
   return i < 0 ? order.length : i;
 };
 
+/** Shift an ISO date by whole months, clamping the day (31 Mar - 1 month = 28/29 Feb). */
+export function addMonths(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
+}
+
+/**
+ * Change of `total` since a baseline snapshot: the last one on or before
+ * `fromDate`, or (when `fallbackFirstAfter`) the first one after it.
+ */
+function changeFrom(monthly, total, fromDate, fallbackFirstAfter = false) {
+  let base = null;
+  for (const m of monthly) if (m.date <= fromDate) base = m;
+  if (!base && fallbackFirstAfter) base = monthly.find((m) => m.date > fromDate) ?? null;
+  if (!base) return { value: null, pct: null, from: null };
+  const value = total - base.total;
+  return { value, pct: base.total ? value / base.total : null, from: base.date };
+}
+
+/**
+ * Change over the last month (against the latest snapshot at least a month old)
+ * and year to date (against the last snapshot of the previous year, or the
+ * year's first snapshot when there is none).
+ */
+export function periodChanges(monthly, total, today) {
+  const year = today.slice(0, 4);
+  return {
+    month: changeFrom(monthly, total, addMonths(today, -1)),
+    ytd: changeFrom(monthly, total, `${Number(year) - 1}-12-31`, true),
+  };
+}
+
+/** Overview groups for the accounts list, in display order. */
+export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
+
+/** Active accounts grouped by asset class: the four main groups first, then any others. */
+export function groupAccounts(accounts) {
+  const groups = new Map(ACCOUNT_GROUPS.map((g) => [g, []]));
+  for (const a of accounts.filter((x) => x.active)) {
+    if (!groups.has(a.assetClass)) groups.set(a.assetClass, []);
+    groups.get(a.assetClass).push(a);
+  }
+  return [...groups.entries()]
+    .filter(([, list]) => list.length)
+    .map(([name, list]) => ({ name, accounts: list.sort((a, b) => b.value - a.value), total: list.reduce((s, a) => s + a.value, 0) }));
+}
+
+/**
+ * Deposit or withdrawal that takes an account from `current` to `newTotal`.
+ * Returns null when nothing changes.
+ */
+export function moveToTotal(current, newTotal) {
+  const diff = Math.round((newTotal - current) * 100) / 100;
+  if (!diff) return null;
+  return diff > 0 ? { type: "DEPOSIT", amount: diff } : { type: "WITHDRAWAL", amount: -diff };
+}
+
+/**
+ * Form values that repeat a Transactions row, dated today. Maps the row back
+ * to the form type it came from.
+ */
+export function repeatForm(cells, today) {
+  const [, account, type, symbol, units, price, , cash, note] = cells;
+  const base = { date: today, note: String(note ?? "") };
+  if (account === PENSION && type === "BUY") {
+    const u = num(units);
+    const p = num(price);
+    return { ...base, type: "PENSION", fund: symbol, pensionUnits: u ?? "", pensionCash: u && p ? Math.round(u * p * 100) / 100 : "" };
+  }
+  if (account === OPTIONS && type === "BUY") return { ...base, type: "OPTIONS", optionUnits: num(units) ?? "" };
+  if (type === "BUY" || type === "SELL") return { ...base, type, symbol, units: num(units) ?? "", price: num(price) ?? "" };
+  if (type === "DEPOSIT" || type === "WITHDRAWAL") return { ...base, type, account, cash: num(cash) ?? "" };
+  return null;
+}
+
 /** Headline numbers for the dashboard. */
 export function summarize(accounts, monthly) {
   const live = accounts.filter((a) => a.active);
