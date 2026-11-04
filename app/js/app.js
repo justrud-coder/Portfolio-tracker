@@ -182,8 +182,8 @@ function needSignIn() {
     $("#tabs").hidden = true;
     $("#view").innerHTML = `
       <div class="signin">
-        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
-        <h2 style="font-size:20px;color:var(--text)">Portfolio</h2>
+        <img class="app-icon" src="icons/icon-192.png" alt="">
+        <h2>Portfolio</h2>
         <p>Sign in with the Google account that owns the <strong>Portfolio tracker</strong> sheet. The app reads and writes it directly; nothing goes anywhere else.</p>
         <button class="btn" id="signin">Sign in with Google</button>
       </div>`;
@@ -195,8 +195,9 @@ function setupScreen() {
   $("#tabs").hidden = true;
   $("#refresh").hidden = true;
   $("#view").innerHTML = `
+    <h1 class="large-title">Setup</h1>
     <div class="card">
-      <h2 style="color:var(--text);font-size:18px">One-time setup</h2>
+      <h2>One-time setup</h2>
       <p class="small">Paste the OAuth client ID you created in Google Cloud. It ends in <code>.apps.googleusercontent.com</code>. It is saved on this phone only.</p>
       <form id="setup">
         <label class="field">Client ID<input name="id" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
@@ -231,7 +232,19 @@ function render() {
     else b.removeAttribute("aria-current");
   }
   const views = { home: renderHome, goals: renderGoals, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
-  (views[state.view] ?? renderHome)($("#view"));
+  const view = views[state.view] ? state.view : "home";
+  const root = $("#view");
+  views[view](root);
+  // iOS large title, which collapses into the navigation bar on scroll.
+  root.insertAdjacentHTML("afterbegin", `<h1 class="large-title">${TITLES[view]}</h1>`);
+  $("#title").textContent = TITLES[view];
+  onScroll();
+}
+
+const TITLES = { home: "Portfolio", goals: "Goals", retire: "Retirement", add: "New Transaction", snapshot: "Snapshot" };
+
+function onScroll() {
+  $(".top").classList.toggle("scrolled", window.scrollY > 36);
 }
 
 // ---------- overview ----------
@@ -314,8 +327,8 @@ function renderHome(root) {
       <ul class="list">${accountsList(d)}</ul>
     </section>
 
-    <p class="muted small center">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
-    · <a href="#" id="signout" class="muted">Sign out</a></p>
+    <p class="footnote">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
+    · <a href="#" id="signout">Sign out</a></p>
   `;
 
   const draw = () => lineChart($("#chart"), filterRange(points));
@@ -761,6 +774,7 @@ function boot() {
     if (b) go(b.dataset.view);
   });
   $("#refresh").addEventListener("click", () => (getToken() ? load() : signIn(clientId())));
+  window.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("online", () => getToken() && load({ quiet: true }));
   document.addEventListener("visibilitychange", () => {
     // Refresh when the app comes back to the foreground after a while.
