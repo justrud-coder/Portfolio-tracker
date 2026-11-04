@@ -276,8 +276,11 @@ test("overview changes, account groups, new-total deposits and repeats", async (
     { date: "2026-10-05", total: 242162 },
   ];
   const c = m.periodChanges(monthly, 250000, "2026-11-04");
-  assert.equal(c.month.from, "2026-09-05");
-  assert.equal(c.month.value, 250000 - 237713);
+  // Closest snapshot to the same day last month (4 Oct): 5 Oct.
+  assert.equal(c.month.from, "2026-10-05");
+  assert.equal(c.month.value, 250000 - 242162);
+  // A snapshot taken today isn't a baseline.
+  assert.equal(m.periodChanges(monthly, 1, "2026-10-05").month.from, "2026-09-05");
   assert.equal(c.ytd.from, "2025-12-05");
   assert.equal(c.ytd.value, 250000 - 195078);
   // No snapshot last year: YTD starts at the year's first snapshot.
