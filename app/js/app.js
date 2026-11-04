@@ -355,9 +355,9 @@ function renderHome(root) {
   };
 }
 
-// Fixed colours per group, readable on light and dark backgrounds.
-const GROUP_COLORS = { Stocks: "#0a84ff", Cash: "#30b158", "Real estate": "#ff9f0a", Options: "#bf5af2", Pension: "#40c8e0" };
-const SPARE_COLORS = ["#ff6482", "#8e8e93", "#ac8e68", "#64d2ff"];
+// Fixed colours per group to match the coral theme, readable on light and dark.
+const GROUP_COLORS = { Stocks: "#e8475f", Cash: "#00a699", "Real estate": "#f26b3a", Options: "#8a5cf5", Pension: "#f5b400" };
+const SPARE_COLORS = ["#c13584", "#717171", "#b08968", "#3fa9f5"];
 
 /** Donut of each group's share of the total, with a legend. */
 function donut(items) {
@@ -577,7 +577,7 @@ function renderAdd(root) {
   const options = d.holdings.find((h) => h.position === OPTIONS);
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
   const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
-  const recent = d.transactions.slice(-8).reverse();
+  const recent = d.transactions.slice(-10).reverse();
 
   root.innerHTML = `
     <section class="card">

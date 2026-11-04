@@ -315,3 +315,22 @@ test("overview changes, account groups, new-total deposits and repeats", async (
   assert.deepEqual(m.repeatForm(["", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.7034, "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "PENSION", fund: "ARTEA-AA16", pensionUnits: 142.17, pensionCash: 100 });
   assert.deepEqual(m.repeatForm(["", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "OPTIONS", optionUnits: 40 });
 });
+
+test("Artea fund page: unit value and date", async () => {
+  const p = await import("../scripts/prices.mjs");
+  const html = `<html><script>var x = "Vieneto vertė 9.9999";</script><body><div class="nav">Pensija</div>
+    <div class="fund"><span>Vieneto vertė</span> <strong>0,7123</strong>&nbsp;EUR <small>2026-11-03</small></div></body></html>`;
+  assert.deepEqual(p.parseArteaPage(html), { price: 0.7123, date: "2026-11-03" });
+  assert.deepEqual(p.parseArteaPage("<p>VAV (EUR) 03.11.2026</p><p>0.71230</p>"), { price: 0.7123, date: "2026-11-03" });
+  assert.equal(p.parseArteaPage("<p>Nothing here 2026</p>"), null);
+  const q = await p.fetchQuote("ARTEA-AA16", async () => ({ ok: true, text: async () => html }), "artea");
+  assert.equal(q.priceEur, 0.7123);
+  assert.ok(p.plausible(0.7034, 0.7123));
+  assert.ok(!p.plausible(0.7034, 7.123));
+  assert.ok(p.plausible("", 5));
+  const grid = [["Position", "Symbol", "Name", "Units", "Price source", "Last price", "Currency", "Price date"], ["III pillar", "ARTEA-AA16", "", 1, "artea", 0.7, "EUR", ""]];
+  assert.deepEqual(p.priceUpdates(grid, { "ARTEA-AA16": q }), [
+    { range: "Holdings!F2", values: [[0.7123]] },
+    { range: "Holdings!H2", values: [["2026-11-03"]] },
+  ]);
+});
