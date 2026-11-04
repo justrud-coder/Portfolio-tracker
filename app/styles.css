@@ -213,6 +213,15 @@ main { padding: 0 16px 24px; max-width: 720px; margin: 0 auto; outline: none; }
 .row .name { font-weight: 400; }
 .row .meta { font-size: 13px; color: var(--muted); letter-spacing: -0.08px; margin-top: 1px; }
 .row .right { text-align: right; flex: none; }
+.rep-btn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0 -4px; padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rep-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rep-btn:active { opacity: 0.3; }
+.group-total { font-size: 15px; color: var(--muted); padding: 14px 16px 0 0; }
+div.field { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 0 16px 0 0; font-size: 17px; border-top: 0.5px solid var(--sep); }
+.del-btn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0 -4px 0 -4px; padding: 0; border: 0; background: none; color: var(--down); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.del-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.del-btn:active { opacity: 0.3; }
+.del-btn:disabled { opacity: 0.3; }
 details > summary { list-style: none; cursor: pointer; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary.row { padding-right: 36px; position: relative; }
@@ -257,12 +266,13 @@ form > label.field:first-child, form > .type-pick + label.field, .two > label.fi
 .field input[type="date"] { color: var(--accent); }
 .field input[type="date"]::-webkit-date-and-time-value { text-align: right; }
 .two { display: contents; }
+.field .static { color: var(--muted); padding: 11px 0; }
 .two > label.field { border-top: 0.5px solid var(--sep); }
 form > p.small { padding: 0 16px 8px 0; margin: 0 !important; }
 
-/* Transaction type: scrolling segmented control */
+/* Transaction type: segmented control, two rows of three */
 .type-pick {
-  display: flex; gap: 0; overflow-x: auto; scrollbar-width: none;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
   background: var(--fill); border-radius: 9px; padding: 2px; margin: 12px 16px 12px 0;
 }
 .type-pick::-webkit-scrollbar { display: none; }
@@ -301,7 +311,7 @@ form > p.small { padding: 0 16px 8px 0; margin: 0 !important; }
 /* ---------- tab bar ---------- */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(3, 1fr);
   background: var(--bar-bg);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
@@ -333,3 +343,20 @@ code { background: var(--fill); padding: 1px 5px; border-radius: 5px; font-size:
 }
 
 .row.pick .name { font-weight: 600; }
+
+/* Radio-based segmented control (deposit: add amount / new total) */
+.seg label { position: relative; }
+.seg label input { position: absolute; opacity: 0; inset: 0; margin: 0; }
+.seg label span { display: block; padding: 5px 10px; border-radius: 7px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.seg label input:checked + span { background: var(--thumb); font-weight: 600; box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04); }
+
+/* Privacy mode: amounts are blurred until the eye button is tapped again */
+#privacy .eye-closed { display: none; }
+.privacy #privacy .eye-open { display: none; }
+.privacy #privacy .eye-closed { display: inline; }
+.privacy .num, .privacy .chart, .privacy .figs dd, .privacy .meta, .privacy .preview,
+.privacy .banner, .privacy .total-line, .privacy .stat .value, .privacy .stat .sub,
+.privacy input:not([type="radio"]):not([type="date"]) {
+  filter: blur(9px); transition: filter 0.2s;
+}
+.privacy .num, .privacy .chart { user-select: none; pointer-events: none; }

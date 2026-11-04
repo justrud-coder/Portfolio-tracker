@@ -22,6 +22,10 @@
       <h1 id="title"></h1>
       <div class="top-actions">
         <span id="status" class="muted small" aria-live="polite"></span>
+        <button id="privacy" class="icon-btn" aria-label="Hide amounts" aria-pressed="false" title="Hide amounts">
+          <svg class="eye-open" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          <svg class="eye-closed" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7c1.9 0 3.5-.6 4.9-1.4M9.9 9.9a3 3 0 0 0 4.2 4.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <button id="refresh" class="icon-btn" aria-label="Refresh" title="Refresh">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
@@ -39,21 +43,13 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" /></svg>
         <span>Overview</span>
       </button>
-      <button data-view="goals">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" /><circle cx="12" cy="12" r="0.5" /></svg>
-        <span>Goals</span>
-      </button>
       <button data-view="retire">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 20c0-4 3-7 7-7s7 3 7 7M12 13V4M12 4l5 3-5 3" /></svg>
-        <span>Retirement</span>
+        <span>Goals</span>
       </button>
       <button data-view="add">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
         <span>Transaction</span>
-      </button>
-      <button data-view="snapshot">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M4 10h16M9 3v4M15 3v4" /></svg>
-        <span>Snapshot</span>
       </button>
     </nav>
   </body>

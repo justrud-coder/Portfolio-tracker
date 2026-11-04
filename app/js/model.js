@@ -228,6 +228,84 @@ const rank = (order, name) => {
   return i < 0 ? order.length : i;
 };
 
+/** Shift an ISO date by whole months, clamping the day (31 Mar - 1 month = 28/29 Feb). */
+export function addMonths(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
+}
+
+/**
+ * Change of `total` since a baseline snapshot: the last one on or before
+ * `fromDate`, or (when `fallbackFirstAfter`) the first one after it.
+ */
+function changeFrom(monthly, total, fromDate, fallbackFirstAfter = false) {
+  let base = null;
+  for (const m of monthly) if (m.date <= fromDate) base = m;
+  if (!base && fallbackFirstAfter) base = monthly.find((m) => m.date > fromDate) ?? null;
+  if (!base) return { value: null, pct: null, from: null };
+  const value = total - base.total;
+  return { value, pct: base.total ? value / base.total : null, from: base.date };
+}
+
+/**
+ * Change over the last month (against the latest snapshot at least a month old)
+ * and year to date (against the last snapshot of the previous year, or the
+ * year's first snapshot when there is none).
+ */
+export function periodChanges(monthly, total, today) {
+  const year = today.slice(0, 4);
+  return {
+    month: changeFrom(monthly, total, addMonths(today, -1)),
+    ytd: changeFrom(monthly, total, `${Number(year) - 1}-12-31`, true),
+  };
+}
+
+/** Overview groups for the accounts list, in display order. */
+export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
+
+/** Active accounts grouped by asset class: the four main groups first, then any others. */
+export function groupAccounts(accounts) {
+  const groups = new Map(ACCOUNT_GROUPS.map((g) => [g, []]));
+  for (const a of accounts.filter((x) => x.active)) {
+    if (!groups.has(a.assetClass)) groups.set(a.assetClass, []);
+    groups.get(a.assetClass).push(a);
+  }
+  return [...groups.entries()]
+    .filter(([, list]) => list.length)
+    .map(([name, list]) => ({ name, accounts: list.sort((a, b) => b.value - a.value), total: list.reduce((s, a) => s + a.value, 0) }));
+}
+
+/**
+ * Deposit or withdrawal that takes an account from `current` to `newTotal`.
+ * Returns null when nothing changes.
+ */
+export function moveToTotal(current, newTotal) {
+  const diff = Math.round((newTotal - current) * 100) / 100;
+  if (!diff) return null;
+  return diff > 0 ? { type: "DEPOSIT", amount: diff } : { type: "WITHDRAWAL", amount: -diff };
+}
+
+/**
+ * Form values that repeat a Transactions row, dated today. Maps the row back
+ * to the form type it came from.
+ */
+export function repeatForm(cells, today) {
+  const [, account, type, symbol, units, price, , cash, note] = cells;
+  const base = { date: today, note: String(note ?? "") };
+  if (account === PENSION && type === "BUY") {
+    const u = num(units);
+    const p = num(price);
+    return { ...base, type: "PENSION", fund: symbol, pensionUnits: u ?? "", pensionCash: u && p ? Math.round(u * p * 100) / 100 : "" };
+  }
+  if (account === OPTIONS && type === "BUY") return { ...base, type: "OPTIONS", optionUnits: num(units) ?? "" };
+  if (type === "BUY" || type === "SELL") return { ...base, type, symbol, units: num(units) ?? "", price: num(price) ?? "" };
+  if (type === "DEPOSIT" || type === "WITHDRAWAL") return { ...base, type, account, cash: num(cash) ?? "" };
+  return null;
+}
+
 /** Headline numbers for the dashboard. */
 export function summarize(accounts, monthly) {
   const live = accounts.filter((a) => a.active);
@@ -277,49 +355,120 @@ export function summarize(accounts, monthly) {
   };
 }
 
-export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL", "DIVIDEND", "FEE"];
+export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL"];
+/** Account that holds stocks and IBKR cash, and the symbol of that cash. */
+export const BROKER = "IBKR";
+export const BROKER_CASH = "CASH";
+/** Account that holds the III pillar pension funds. */
+export const PENSION = "III pillar";
+/** Account that holds the Vinted share options (units x value per option). */
+export const OPTIONS = "Vinted options";
 
 /**
  * Validate a transaction form and return the A:I row for the Transactions tab:
  * Date, Account, Type, Symbol, Units, Price (EUR), Fees (EUR), Cash amount (EUR), Note.
+ *
+ * Types:
+ * - BUY / SELL: stocks at IBKR (paid from / paid into IBKR cash on the sheet).
+ * - DEPOSIT / WITHDRAWAL: a cash account, or IBKR cash (account "IBKR").
+ * - PENSION: units bought in a III pillar fund, written as a BUY in "III pillar"
+ *   with the unit price worked out from the amount paid.
+ * - OPTIONS: Vinted options received, written as a BUY with no cost.
  */
 export function transactionRow(t) {
   const errors = [];
   const type = String(t.type ?? "").toUpperCase();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
-  if (!t.account) errors.push("Pick an account.");
-  if (!TX_TYPES.includes(type)) errors.push("Pick a type.");
-  const trade = type === "BUY" || type === "SELL";
   const units = num(t.units);
   const price = num(t.price);
-  const fees = num(t.fees);
   const cash = num(t.cash);
-  if (trade) {
-    if (!t.symbol) errors.push("Enter the symbol.");
+  const note = (t.note ?? "").trim();
+  let row = null;
+  if (type === "BUY" || type === "SELL") {
+    const symbol = String(t.symbol ?? "").trim().toUpperCase();
+    if (!symbol) errors.push("Enter the symbol.");
+    else if (symbol === BROKER_CASH) errors.push("Use Deposit or Withdraw for IBKR cash.");
     if (!(units > 0)) errors.push("Units must be more than 0.");
     if (!(price > 0)) errors.push("Price must be more than 0.");
-  } else if (!(cash > 0)) {
-    errors.push("Amount must be more than 0.");
+    row = [t.date, BROKER, type, symbol, units, price, "", "", note];
+  } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
+    if (!t.account) errors.push("Pick an account.");
+    if (!(cash > 0)) errors.push("Amount must be more than 0.");
+    row = [t.date, t.account, type, t.account === BROKER ? BROKER_CASH : "", "", "", "", cash, note];
+  } else if (type === "PENSION") {
+    const fund = String(t.fund ?? "").trim();
+    if (!fund) errors.push("Pick a fund, or enter the new fund's name.");
+    if (!(units > 0)) errors.push("Units must be more than 0.");
+    if (!(cash > 0)) errors.push("Amount paid must be more than 0.");
+    const unitPrice = units > 0 && cash > 0 ? Math.round((cash / units) * 1e6) / 1e6 : "";
+    row = [t.date, PENSION, "BUY", fund, units, unitPrice, "", "", note];
+  } else if (type === "OPTIONS") {
+    const symbol = String(t.symbol ?? "").trim();
+    if (!symbol) errors.push("The sheet has no Vinted options position on the Holdings tab.");
+    if (!(units > 0)) errors.push("Options received must be more than 0.");
+    row = [t.date, OPTIONS, "BUY", symbol, units, "", "", "", note];
+  } else {
+    errors.push("Pick a type.");
   }
-  if (fees !== null && fees < 0) errors.push("Fees can't be negative.");
   if (errors.length) return { errors };
-  return {
-    errors,
-    row: [
-      t.date,
-      t.account,
-      type,
-      trade || type === "DIVIDEND" ? (t.symbol ?? "").trim() : "",
-      trade ? units : "",
-      trade ? price : "",
-      fees ?? "",
-      trade ? "" : cash,
-      (t.note ?? "").trim(),
-    ],
-  };
+  return { errors, row };
+}
+
+/** A short unique symbol for a new fund, made from its name. */
+export function fundSymbol(name, taken = []) {
+  const base =
+    String(name ?? "")
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)
+      .replace(/-+$/, "") || "FUND";
+  const used = new Set(taken.map((x) => String(x).toUpperCase()));
+  let sym = base;
+  for (let i = 2; used.has(sym); i++) sym = `${base}-${i}`;
+  return sym;
+}
+
+/** First Holdings row (1-based) with no symbol, after the header. */
+export function nextHoldingsRow(grid) {
+  for (let i = 1; i < grid.length; i++) if (!String(grid[i]?.[1] ?? "").trim()) return i + 1;
+  return Math.max(grid.length, 1) + 1;
+}
+
+/**
+ * A full Holdings row (A:M) for a new position, with the same formulas as the
+ * rows above it: units from Transactions, cost basis, value and gain.
+ */
+export function holdingsRow(r, { position, symbol, name, source = "manual", price = "", currency = "EUR", priceDate = "" }) {
+  const tx = (col, type) =>
+    `SUMIFS(Transactions!$${col}:$${col},Transactions!$B:$B,$A${r},Transactions!$D:$D,$B${r},Transactions!$C:$C,"${type}")`;
+  return [
+    position,
+    symbol,
+    name,
+    `=IF($B${r}="","",${tx("E", "BUY")}-${tx("E", "SELL")})`,
+    source,
+    price,
+    currency,
+    priceDate,
+    `=IF(OR($B${r}="",$J${r}="",$F${r}=""),"",$J${r}*$D${r})`,
+    `=IF($B${r}="","",LET(u,${tx("E", "BUY")},c,${tx("J", "BUY")},IF(OR(u=0,c=0),"",c/u)))`,
+    `=IF(OR($B${r}="",$F${r}=""),"",$D${r}*$F${r})`,
+    `=IF(OR($B${r}="",$I${r}=""),"",$K${r}-$I${r})`,
+    `=IF(OR($B${r}="",N($I${r})=0),"",$L${r}/$I${r})`,
+  ];
 }
 
 /** Value a transaction adds, as the sheet's Value column computes it. */
+/** True when two Transactions rows hold the same entry (columns A–I). */
+export function sameTransaction(a, b) {
+  const cell = (r, i) => String(r?.[i] ?? "").trim();
+  for (let i = 0; i < 9; i++) if (cell(a, i) !== cell(b, i)) return false;
+  return true;
+}
+
 export function transactionValue(row) {
   const [, , type, , units, price, fees, cash] = row;
   const f = num(fees) ?? 0;
@@ -354,7 +503,7 @@ export const RETIREMENT_INPUTS = {
   pension: "Public pension per month",
   pensionAge: "Public pension from age",
   returnPre: "Real return before retirement",
-  returnPost: "Real return in retirement",
+  returnPost: ["Real return after retirement", "Real return in retirement"],
   inflation: "Inflation",
   counted: "Portfolio counted",
   monthly: "Monthly investment now",
@@ -387,7 +536,8 @@ export function parseRetirement(grid) {
     const label = norm(grid[r]?.[0]);
     if (!label) continue;
     for (const [key, name] of Object.entries(RETIREMENT_INPUTS)) {
-      if (rows[key] || !label.startsWith(norm(name))) continue;
+      const names = Array.isArray(name) ? name : [name];
+      if (rows[key] || !names.some((n) => label.startsWith(norm(n)))) continue;
       rows[key] = r + 1;
       const v = grid[r]?.[1];
       if (key === "counted") {

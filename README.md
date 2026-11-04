@@ -3,10 +3,10 @@
 A phone app for the **Portfolio tracker** Google Sheet. It's a PWA: you install it from a web page once, and after that it opens from your home screen like any other app. It talks to Google Sheets directly from the phone, signed in with your own Google account. There is no server, so it works on mobile data and your laptop never has to be on.
 
 - **Overview:** total value, change since the last snapshot and over the last month, gain against cost basis, value over time, allocation by asset class and liquidity, and every account (tap a holdings account to see its positions).
-- **Goals:** progress for each row of the Goals tab.
+- **Goals:** the retirement plan from the Retirement tab of the sheet.
 - **Retirement:** the plan to retire at a set age on a monthly spend in today's money: the portfolio needed, the monthly investment needed, whether you're ahead, on track or behind, and the monthly spend your portfolio would pay if you retired today. Edit the inputs in the app and they're saved to the Retirement tab of the sheet, which has the same formulas.
 - **Transaction:** add a buy, sell, deposit, withdrawal, dividend or fee to the Transactions tab.
-- **Snapshot:** save this month's value for every active account to the History tab. Holdings accounts are filled in with today's live value; manual accounts start at their last value so you only change what moved.
+- **Monthly snapshot (automatic):** on the 1st of every month a GitHub Action saves every active account's current value to the History tab, which feeds the chart and the monthly change. Run it by hand from the Actions tab ("Monthly snapshot" → Run workflow) if you need one sooner.
 
 The sheet stays the source of truth and does all the maths (units, cost basis, monthly totals, goals). The app reads it and appends rows; it never edits formulas.
 
@@ -24,6 +24,8 @@ A daily GitHub Action fetches market prices and writes them to the Holdings tab.
 | `scripts/update-prices.mjs` | The daily price job. It has no dependencies. |
 | `.github/workflows/pages.yml` | Publishes `app/` to GitHub Pages on every push to `main`. |
 | `.github/workflows/update-prices.yml` | Runs the price job every weekday at 18:30 UTC. |
+| `scripts/snapshot.mjs` | The monthly snapshot job. Uses the same service account as the price job. |
+| `.github/workflows/monthly-snapshot.yml` | Runs the snapshot job at 06:00 UTC on the 1st of each month. |
 
 ### Sign-in and privacy
 

@@ -2,19 +2,28 @@ import { CONFIG } from "../config.js";
 import { AuthError, Sheets, getToken, handleRedirect, signIn, signOut } from "./google.js";
 import {
   COUNTED_OPTIONS,
-  TX_TYPES,
+  BROKER,
+  BROKER_CASH,
+  PENSION,
+  OPTIONS,
+  fundSymbol,
+  holdingsRow,
+  nextHoldingsRow,
   countedValue,
   nextFreeRow,
   parseRetirement,
+  sameTransaction,
   retirementPlan,
   parseAccounts,
-  parseGoals,
   parseHistory,
   parseHoldings,
   parseLists,
   parseMonthly,
-  planSnapshot,
   summarize,
+  periodChanges,
+  groupAccounts,
+  moveToTotal,
+  repeatForm,
   transactionRow,
   transactionValue,
   num,
@@ -27,7 +36,6 @@ const RANGES = {
   accounts: "Accounts!A1:L300",
   holdings: "Holdings!A1:M300",
   monthly: "Monthly!A1:Z2000",
-  goals: "Goals!A1:J100",
   lists: "Lists!A1:J60",
   history: "History!A1:D10000",
   transactions: "Transactions!A1:I10000",
@@ -80,7 +88,6 @@ function parseAll(raw) {
     accounts: parseAccounts(raw.accounts),
     holdings: parseHoldings(raw.holdings),
     monthly: parseMonthly(raw.monthly),
-    goals: parseGoals(raw.goals),
     retirement: parseRetirement(raw.retirement ?? []),
     lists,
     history: parseHistory(raw.history),
@@ -227,11 +234,15 @@ function go(view) {
 function render() {
   if (!state.data) return;
   $("#tabs").hidden = false;
+  // "goals" was the old goals tab; the retirement plan is the Goals tab now.
+  if (state.view === "goals") state.view = "retire";
+  // The Snapshot tab was replaced by the monthly snapshot job.
+  if (state.view === "snapshot") state.view = "home";
   for (const b of $("#tabs").querySelectorAll("button")) {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, goals: renderGoals, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
+  const views = { home: renderHome, retire: renderRetire, add: renderAdd };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -241,7 +252,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", goals: "Goals", retire: "Retirement", add: "New Transaction", snapshot: "Snapshot" };
+const TITLES = { home: "Portfolio", retire: "Goals", add: "New Transaction" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -272,6 +283,14 @@ function renderHome(root) {
   const today = todayIso();
   if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
 
+  const changes = periodChanges(d.monthly, s.total, today);
+  const changeTile = (label, c, fromWord) => `
+      <div class="card stat">
+        <div class="label">${label}</div>
+        <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
+        <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
+      </div>`;
+
   const gainTile =
     s.gain === null
       ? `<div class="value muted">–</div><div class="sub muted">Add BUY transactions with prices to see this.</div>`
@@ -286,16 +305,8 @@ function renderHome(root) {
     </section>
 
     <section class="stats">
-      <div class="card stat">
-        <div class="label">Since last snapshot</div>
-        <div class="value">${s.sinceSnapshot === null ? "–" : `<span class="${tone(s.sinceSnapshot)} num">${signedEur(s.sinceSnapshot)}</span>`}</div>
-        <div class="sub">${s.lastSnapshot ? `<span class="${tone(s.sinceSnapshot)} num">${signedPct(s.sinceSnapshotPct)}</span> <span class="muted">since ${shortDate(s.lastSnapshot.date)}</span>` : ""}</div>
-      </div>
-      <div class="card stat">
-        <div class="label">Last month</div>
-        <div class="value">${s.lastMonth === null ? "–" : `<span class="${tone(s.lastMonth)} num">${signedEur(s.lastMonth)}</span>`}</div>
-        <div class="sub">${s.prevSnapshot ? `<span class="${tone(s.lastMonth)} num">${signedPct(s.lastMonthPct)}</span> <span class="muted">to ${shortDate(s.lastSnapshot.date)}</span>` : ""}</div>
-      </div>
+      ${changeTile("Last month", changes.month, "since")}
+      ${changeTile("This year", changes.ytd, "since")}
       <div class="card stat wide">
         <div class="label">Gain vs cost</div>
         ${gainTile}
@@ -317,15 +328,15 @@ function renderHome(root) {
       <div class="bars">${bars(s.allocation)}</div>
     </section>
 
+    ${groupAccounts(d.accounts)
+      .map(
+        (g) => `
     <section class="card">
-      <h2>Liquidity</h2>
-      <div class="bars">${bars(s.liquidity)}</div>
-    </section>
-
-    <section class="card">
-      <h2>Accounts</h2>
-      <ul class="list">${accountsList(d)}</ul>
-    </section>
+      <div class="card-head"><h2>${esc(g.name)}</h2><span class="group-total num">${eur(g.total)}</span></div>
+      <ul class="list">${accountsList(d, g.accounts)}</ul>
+    </section>`,
+      )
+      .join("")}
 
     <p class="footnote">${state.loadedAt ? `Loaded ${new Date(state.loadedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}` : ""}
     · <a href="#" id="signout">Sign out</a></p>
@@ -345,6 +356,10 @@ function renderHome(root) {
     e.preventDefault();
     signOut();
     ls.del(CACHE_KEY);
+    ls.del(PIN_KEY);
+    ls.del(PASSKEY_KEY);
+    ls.del("pt.privacy");
+    document.documentElement.classList.remove("privacy");
     state.data = null;
     needSignIn();
   };
@@ -363,10 +378,8 @@ function bars(items) {
     .join("");
 }
 
-function accountsList(d) {
-  return d.accounts
-    .filter((a) => a.active)
-    .sort((a, b) => b.value - a.value)
+function accountsList(d, accounts) {
+  return accounts
     .map((a) => {
       const holdings = d.holdings.filter((h) => h.position === a.name);
       const right = `<div class="right"><div class="num">${eur(a.value)}</div>${
@@ -388,33 +401,6 @@ function accountsList(d) {
     .join("");
 }
 
-// ---------- goals ----------
-
-function renderGoals(root) {
-  const goals = state.data.goals;
-  if (!goals.length) {
-    root.innerHTML = `<div class="card"><p class="muted">No goals yet. Add one on the <strong>Goals</strong> tab of the sheet: a name, a measure (Total, Liquid, Stocks, …), a target and a date.</p></div>`;
-    return;
-  }
-  root.innerHTML = goals
-    .map((g) => {
-      const p = Math.max(0, Math.min(1, g.progress ?? 0));
-      return `
-      <section class="card goal">
-        <div class="card-head"><h2 style="color:var(--text);font-size:16px">${esc(g.goal)}</h2><strong class="num">${pct(g.progress)}</strong></div>
-        <div class="small muted">${esc(g.measure)}${g.targetDate ? ` · by ${shortDate(g.targetDate)}` : ""}</div>
-        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><div style="width:${(p * 100).toFixed(1)}%"></div></div>
-        <dl class="figs">
-          <div><dt>Current</dt><dd class="num">${eur(g.current)}</dd></div>
-          <div><dt>Target</dt><dd class="num">${eur(g.target)}</dd></div>
-          <div><dt>Remaining</dt><dd class="num">${eur(g.remaining)}</dd></div>
-          <div><dt>Needed per month</dt><dd class="num">${g.perMonth === null ? (g.remaining === 0 ? "Reached" : "–") : eur(g.perMonth)}${g.perMonth !== null && g.monthsLeft ? ` <span class="muted small">× ${g.monthsLeft}</span>` : ""}</dd></div>
-        </dl>
-      </section>`;
-    })
-    .join("");
-}
-
 // ---------- retirement ----------
 
 const RETIRE_FIELDS = [
@@ -425,8 +411,8 @@ const RETIRE_FIELDS = [
   { key: "spend", label: "Spend (€/month)", kind: "eur" },
   { key: "pension", label: "Pension (€/month)", kind: "eur" },
   { key: "monthly", label: "Investing (€/month)", kind: "eur" },
-  { key: "returnPre", label: "Real return before (%)", kind: "pct" },
-  { key: "returnPost", label: "Real return after (%)", kind: "pct" },
+  { key: "returnPre", label: "Real return before retirement (%)", kind: "pct" },
+  { key: "returnPost", label: "Real return after retirement (%)", kind: "pct" },
   { key: "inflation", label: "Inflation (%)", kind: "pct" },
 ];
 
@@ -583,11 +569,29 @@ function renderRetire(root) {
 
 // ---------- add transaction ----------
 
+const TX_MODES = [
+  ["BUY", "Buy"],
+  ["SELL", "Sell"],
+  ["DEPOSIT", "Deposit"],
+  ["WITHDRAWAL", "Withdraw"],
+  ["PENSION", "III pillar"],
+  ["OPTIONS", "Options"],
+];
+const NEW_FUND = "__new";
+
 function renderAdd(root) {
   const d = state.data;
-  const accounts = d.accounts.filter((a) => a.active).map((a) => a.name);
-  const types = d.lists["Transaction type"]?.length ? d.lists["Transaction type"] : TX_TYPES;
+  // Deposits and withdrawals: the active cash accounts, plus cash held at IBKR.
+  const cashAccounts = [
+    ...d.accounts.filter((a) => a.active && a.assetClass === "Cash").map((a) => ({ value: a.name, label: a.name })),
+    { value: BROKER, label: "IBKR cash" },
+  ];
+  const stocks = d.holdings.filter((h) => h.position === BROKER && h.symbol !== BROKER_CASH);
+  const brokerCash = d.holdings.find((h) => h.position === BROKER && h.symbol === BROKER_CASH);
+  const funds = d.holdings.filter((h) => h.position === PENSION);
+  const options = d.holdings.find((h) => h.position === OPTIONS);
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
+  const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
   const recent = d.transactions.slice(-8).reverse();
 
   root.innerHTML = `
@@ -595,22 +599,40 @@ function renderAdd(root) {
       <h2>Add a transaction</h2>
       <form id="tx" novalidate>
         <div class="type-pick" role="radiogroup" aria-label="Type">
-          ${types.map((t) => `<label><input type="radio" name="type" value="${esc(t)}" ${t === (last.type || "BUY") ? "checked" : ""}><span>${esc(t[0] + t.slice(1).toLowerCase())}</span></label>`).join("")}
+          ${TX_MODES.map(([m, label]) => `<label><input type="radio" name="type" value="${m}" ${m === mode ? "checked" : ""}><span>${label}</span></label>`).join("")}
         </div>
-        <div class="two">
-          <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
-          <label class="field">Account
-            <select name="account">${accounts.map((a) => `<option ${a === last.account ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
-          </label>
-        </div>
-        <label class="field" data-for="symbol">Symbol<input name="symbol" list="symbols" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. VWCE.DE"></label>
-        <datalist id="symbols"></datalist>
+        <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
         <div class="two" data-for="trade">
+          <label class="field">Account<span class="static">IBKR</span></label>
+          <label class="field">Symbol<input name="symbol" list="symbols" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. VWCE.DE"></label>
+          <datalist id="symbols">${stocks.map((h) => `<option value="${esc(h.symbol)}">${esc(h.name)}</option>`).join("")}</datalist>
           <label class="field">Units<input name="units" inputmode="decimal" autocomplete="off"></label>
           <label class="field">Price per unit (€)<input name="price" inputmode="decimal" autocomplete="off"></label>
         </div>
-        <label class="field" data-for="cash">Amount (€)<input name="cash" inputmode="decimal" autocomplete="off"></label>
-        <label class="field">Fees (€)<input name="fees" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+        <div class="two" data-for="cash">
+          <label class="field">Account
+            <select name="account">${cashAccounts.map((a) => `<option value="${esc(a.value)}" ${a.value === last.account ? "selected" : ""}>${esc(a.label)}</option>`).join("")}</select>
+          </label>
+          <div class="field" data-for="cashmode">How
+            <div class="seg" role="radiogroup" aria-label="Deposit as">
+              <label><input type="radio" name="cashMode" value="add" checked><span>Add amount</span></label>
+              <label><input type="radio" name="cashMode" value="total"><span>New total</span></label>
+            </div>
+          </div>
+          <label class="field"><span id="cashLabel">Amount (€)</span><input name="cash" inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <div class="two" data-for="pension">
+          <label class="field">Fund
+            <select name="fund">${funds.map((h) => `<option value="${esc(h.symbol)}" ${h.symbol === last.fund ? "selected" : ""}>${esc(h.name || h.symbol)}</option>`).join("")}<option value="${NEW_FUND}" ${funds.length ? "" : "selected"}>New fund…</option></select>
+          </label>
+          <label class="field" data-for="newfund">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
+          <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
+          <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <div class="two" data-for="options">
+          <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
+          <label class="field">Value per option (€)<input name="optionValue" inputmode="decimal" autocomplete="off" value="${options?.price ?? ""}"></label>
+        </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
         <ul class="errors" id="txErrors"></ul>
@@ -625,27 +647,95 @@ function renderAdd(root) {
               const v = transactionValue(c);
               return `<li><div class="row"><div><div class="name">${esc(c[2])} ${esc(c[3] || "")}</div><div class="meta">${esc(c[1])} · ${
                 serialToIso(c[0]) ? shortDate(serialToIso(c[0])) : "no date"
-              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div></div></li>`;
+              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="rep-btn" data-row="${t.row}" aria-label="Repeat this transaction" title="Repeat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.66 5.66L4 15.5M4 20v-4.5h4.5" /></svg></button><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
             })
             .join("")}</ul></section>`
         : ""
     }`;
 
+  for (const b of root.querySelectorAll(".del-btn")) {
+    b.onclick = async () => {
+      const t = d.transactions.find((x) => x.row === Number(b.dataset.row));
+      if (!t) return;
+      const c = t.cells;
+      const what = `${c[2]}${c[3] ? ` ${c[3]}` : ""} on ${c[1]}`;
+      if (!confirm(`Remove ${what} from the sheet? This deletes row ${t.row} of the Transactions tab.`)) return;
+      b.disabled = true;
+      try {
+        await deleteTransaction(t);
+        showBanner(`Removed ${esc(what)}.`, "ok");
+        await load({ quiet: true });
+      } catch (err) {
+        if (err instanceof AuthError) needSignIn();
+        else showBanner(esc(err.message || String(err)), "error");
+        b.disabled = false;
+      }
+    };
+  }
+
   const form = $("#tx");
+  for (const b of root.querySelectorAll(".rep-btn")) {
+    b.onclick = () => {
+      const t = d.transactions.find((x) => x.row === Number(b.dataset.row));
+      const v = t && repeatForm(t.cells, todayIso());
+      if (!v) return showBanner("This transaction can't be repeated from here.", "error");
+      form.reset();
+      form.querySelector(`input[name="type"][value="${v.type}"]`).checked = true;
+      for (const [k, val] of Object.entries(v)) {
+        const el = form.elements[k];
+        if (!el || k === "type") continue;
+        if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(val))) continue;
+        el.value = val;
+      }
+      sync();
+      $("#txErrors").innerHTML = "";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showBanner("Filled in from that transaction with today's date. Check it and tap Save.", "ok");
+    };
+  }
   const sync = () => {
     const f = new FormData(form);
     const type = f.get("type");
     const trade = type === "BUY" || type === "SELL";
+    const pension = type === "PENSION";
     form.querySelector('[data-for="trade"]').hidden = !trade;
-    form.querySelector('[data-for="cash"]').hidden = trade;
-    form.querySelector('[data-for="symbol"]').hidden = !(trade || type === "DIVIDEND");
-    const symbols = [...new Set(d.holdings.filter((h) => h.position === f.get("account")).map((h) => h.symbol))];
-    $("#symbols").innerHTML = symbols.map((s) => `<option value="${esc(s)}">`).join("");
-    const units = num(f.get("units"));
-    const price = num(f.get("price"));
-    const fees = num(f.get("fees")) ?? 0;
-    $("#txPreview").textContent =
-      trade && units && price ? `Total ${eurCents(type === "BUY" ? units * price + fees : units * price - fees)}` : "";
+    const opts = type === "OPTIONS";
+    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts;
+    form.querySelector('[data-for="pension"]').hidden = !pension;
+    form.querySelector('[data-for="options"]').hidden = !opts;
+    const toTotal = type === "DEPOSIT" && f.get("cashMode") === "total";
+    form.querySelector('[data-for="cashmode"]').hidden = type !== "DEPOSIT";
+    $("#cashLabel").textContent = toTotal ? "New total (€)" : "Amount (€)";
+    form.querySelector('[data-for="newfund"]').hidden = f.get("fund") !== NEW_FUND;
+    let msg = "";
+    if (trade) {
+      const units = num(f.get("units"));
+      const price = num(f.get("price"));
+      const have = brokerCash?.value ?? 0;
+      if (units && price) {
+        const total = units * price;
+        msg = `Total ${eurCents(total)}. ${type === "BUY" ? `Paid from IBKR cash (${eurCents(have)} now, ${eurCents(have - total)} after).` : `Paid into IBKR cash (${eurCents(have + total)} after).`}`;
+      }
+    } else if (pension) {
+      const units = num(f.get("pensionUnits"));
+      const cash = num(f.get("pensionCash"));
+      if (units && cash) msg = `Unit price ${(cash / units).toLocaleString("en-IE", { maximumFractionDigits: 4 })} €. It becomes the fund's latest price.`;
+    } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
+      const acct = f.get("account");
+      const current = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
+      const amount = num(String(f.get("cash") ?? "").replace(",", "."));
+      if (toTotal) {
+        const move = amount === null ? null : moveToTotal(current, amount);
+        msg = `Now ${eurCents(current)}.${amount === null ? "" : move ? ` Saves a ${move.type.toLowerCase()} of ${eurCents(move.amount)}.` : " No change."}`;
+      } else {
+        msg = `Now ${eurCents(current)}${amount ? `, ${eurCents(type === "DEPOSIT" ? current + amount : current - amount)} after` : ""}.`;
+      }
+    } else if (opts && options) {
+      const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
+      const value = num(f.get("optionValue")) ?? options.price ?? 0;
+      msg = `${num(total.toFixed(4))} options × ${eurCents(value)} = ${eurCents(total * value)}.`;
+    }
+    $("#txPreview").textContent = msg;
   };
   form.addEventListener("input", sync);
   form.addEventListener("change", sync);
@@ -654,16 +744,29 @@ function renderAdd(root) {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(form));
-    const { row, errors } = transactionRow(f);
+    if (f.type === "OPTIONS") return saveOptionsForm(f, options);
+    if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
+    const pension = f.type === "PENSION";
+    const newFund = pension && f.fund === NEW_FUND;
+    const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
+    const { row, errors } = transactionRow(input);
     $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
     if (!row) return;
     const btn = $("#txSave");
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      await saveTransaction(row);
-      ls.set("pt.lastTx", JSON.stringify({ type: f.type, account: f.account }));
-      showBanner(`Saved ${esc(row[2].toLowerCase())}${row[3] ? ` ${esc(row[3])}` : ""} on ${esc(row[1])}.`, "ok");
+      let what;
+      if (pension) {
+        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null);
+        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        ls.set("pt.lastTx", JSON.stringify({ type: f.type, fund: fund.symbol }));
+      } else {
+        await saveTransaction(row);
+        what = `${esc(row[2].toLowerCase())}${row[3] && row[3] !== BROKER_CASH ? ` ${esc(row[3])}` : ""} on ${esc(row[1] === BROKER && row[3] === BROKER_CASH ? "IBKR cash" : row[1])}`;
+        ls.set("pt.lastTx", JSON.stringify({ type: f.type, account: f.account }));
+      }
+      showBanner(`Saved ${what}.`, "ok");
       await load({ quiet: true });
     } catch (err) {
       if (err instanceof AuthError) needSignIn();
@@ -690,103 +793,211 @@ async function saveTransaction(row) {
   await sheets.write([{ range: `Transactions!A${n}:I${n}`, values: [row] }]);
 }
 
-// ---------- monthly snapshot ----------
-
-function renderSnapshot(root) {
-  const d = state.data;
-  const accounts = d.accounts.filter((a) => a.active);
-  const lastDate = d.monthly[d.monthly.length - 1]?.date ?? "";
-
-  root.innerHTML = `
-    <section class="card">
-      <h2>Monthly snapshot</h2>
-      <p class="small muted" style="margin-top:-4px">Saves one value per account to the History tab. Accounts priced from holdings are filled in with today's live value. ${
-        lastDate ? `Last snapshot: ${shortDate(lastDate)}.` : ""
-      }</p>
-      <form id="snap" novalidate>
-        <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
-        <div id="snapRows">
-          ${accounts
-            .map(
-              (a, i) => `
-            <div class="snap-row">
-              <div><div>${esc(a.name)}</div><div class="meta">${
-                a.valuation === "holdings" ? "Live value from prices" : a.lastSnapshot ? `Last: ${eur(a.value)} on ${shortDate(a.lastSnapshot)}` : "No earlier value"
-              }</div></div>
-              <input name="v${i}" inputmode="decimal" autocomplete="off" value="${Math.round(a.value * 100) / 100}" aria-label="${esc(a.name)} value in euros">
-            </div>`,
-            )
-            .join("")}
-        </div>
-        <div class="total-line"><span>Total</span><span class="num" id="snapTotal"></span></div>
-        <div class="preview" id="snapPreview"></div>
-        <ul class="errors" id="snapErrors"></ul>
-        <button class="btn" id="snapSave">Save snapshot</button>
-      </form>
-    </section>`;
-
-  const form = $("#snap");
-  const read = () => {
-    const f = new FormData(form);
-    const values = [];
-    const errors = [];
-    accounts.forEach((a, i) => {
-      const raw = String(f.get(`v${i}`) ?? "").trim();
-      if (raw === "") return;
-      const v = num(raw.replace(",", "."));
-      if (v === null) errors.push(`${a.name}: "${raw}" isn't a number.`);
-      else values.push({ account: a.name, value: v });
-    });
-    return { date: f.get("date"), values, errors };
-  };
-  const sync = () => {
-    const { date, values } = read();
-    const total = values.reduce((s, v) => s + v.value, 0);
-    $("#snapTotal").textContent = eur(total);
-    const prev = d.monthly.filter((m) => m.date < date).pop();
-    const same = d.monthly.find((m) => m.date === date);
-    let msg = "";
-    if (prev) msg = `${signedEur(total - prev.total)} (${signedPct(prev.total ? (total - prev.total) / prev.total : null)}) vs ${shortDate(prev.date)}.`;
-    if (same) msg += ` A snapshot for ${shortDate(date)} exists and will be overwritten.`;
-    $("#snapPreview").innerHTML = msg.replace(/^([+−][^ ]+)/, (m) => `<span class="${m.startsWith("+") ? "up" : "down"}">${m}</span>`);
-  };
-  form.addEventListener("input", sync);
-  sync();
-
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const { date, values, errors } = read();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.push("Pick a date.");
-    if (!values.length) errors.push("Enter at least one value.");
-    $("#snapErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
-    if (errors.length) return;
-    if (lastDate && date < lastDate && !confirm(`${shortDate(date)} is before the last snapshot (${shortDate(lastDate)}). Save anyway?`)) return;
-    const btn = $("#snapSave");
-    btn.disabled = true;
-    btn.textContent = "Saving…";
-    try {
-      const plan = await saveSnapshot(date, values);
-      showBanner(`Saved snapshot for ${shortDate(date)}: ${plan.updates.length} accounts${plan.appended < plan.updates.length ? `, ${plan.updates.length - plan.appended} overwritten` : ""}.`, "ok");
-      await load({ quiet: true });
-    } catch (err) {
-      if (err instanceof AuthError) needSignIn();
-      else showBanner(esc(err.message || String(err)), "error");
-      btn.disabled = false;
-      btn.textContent = "Save snapshot";
+/**
+ * Save III pillar units. A new fund gets its own Holdings row first. The unit
+ * price paid becomes the fund's latest price unless a newer one is already set.
+ */
+async function savePension(row, newFundName) {
+  const [holdings] = await sheets.batchGet([RANGES.holdings]);
+  const meta = await freshMeta();
+  const date = row[0];
+  const price = row[5];
+  let fund;
+  if (newFundName) {
+    const tab = meta.tabs.Holdings;
+    if (!tab) throw new Error("The sheet has no Holdings tab.");
+    const symbol = fundSymbol(newFundName, holdings.slice(1).map((r) => r?.[1] ?? ""));
+    const r = nextHoldingsRow(holdings);
+    await sheets.ensureRows(tab, r);
+    const values = holdingsRow(r, { position: PENSION, symbol, name: newFundName, price, priceDate: date });
+    await sheets.write([{ range: `Holdings!A${r}:M${r}`, values: [values] }]);
+    fund = { symbol, name: newFundName };
+  } else {
+    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === row[3]);
+    if (i < 0) throw new Error(`The fund ${row[3]} isn't on the Holdings tab any more. Refresh and try again.`);
+    const r = i + 1;
+    fund = { symbol: row[3], name: holdings[i][2] || row[3] };
+    const known = serialToIso(holdings[i][7]);
+    if (!known || date >= known) {
+      await sheets.write([{ range: `Holdings!F${r}`, values: [[price]] }, { range: `Holdings!H${r}`, values: [[date]] }]);
     }
-  };
+  }
+  await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
+  return fund;
 }
 
-async function saveSnapshot(date, values) {
-  const [grid] = await sheets.batchGet([RANGES.history]);
-  const history = parseHistory(grid);
-  const plan = planSnapshot(date, values, history, nextFreeRow(grid));
+/** Options tab of the form: add options received and/or set the value per option. */
+async function saveOptionsForm(f, options) {
+  const units = String(f.optionUnits ?? "").trim();
+  const value = num(String(f.optionValue ?? "").replace(",", "."));
+  const errors = [];
+  if (!options) errors.push("The sheet has no Vinted options position on the Holdings tab.");
+  if (!units && value === null) errors.push("Enter the options received, the value per option, or both.");
+  if (String(f.optionValue ?? "").trim() && !(value > 0)) errors.push("Value per option must be more than 0.");
+  let row = null;
+  if (units && options) {
+    const r = transactionRow({ ...f, symbol: options.symbol, units });
+    errors.push(...r.errors);
+    row = r.row;
+  }
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const done = [];
+    if (value !== null && value !== options.price) {
+      // Re-read so the right Holdings row is written even if rows moved.
+      const [holdings] = await sheets.batchGet([RANGES.holdings]);
+      const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === OPTIONS && r?.[1] === options.symbol);
+      if (i < 0) throw new Error("The Vinted options row moved on the Holdings tab. Refresh and try again.");
+      await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
+      done.push(`value ${eurCents(value)} per option`);
+    }
+    if (row) {
+      await saveTransaction(row);
+      done.push(`${num(row[4])} new options`);
+    }
+    ls.set("pt.lastTx", JSON.stringify({ type: "OPTIONS" }));
+    showBanner(done.length ? `Saved ${esc(done.join(" and "))}.` : "Nothing changed.", "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
+}
+
+/** Deposit form in "New total" mode: save the deposit or withdrawal that reaches the total. */
+async function saveNewTotal(f) {
+  const total = num(String(f.cash ?? "").replace(",", "."));
+  const errors = [];
+  if (total === null || total < 0) errors.push("Enter the new total, 0 or more.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    // Re-read the balance so the difference is taken from the sheet as it is now.
+    const [accountsGrid, holdingsGrid] = await sheets.batchGet([RANGES.accounts, RANGES.holdings]);
+    const current =
+      f.account === BROKER
+        ? parseHoldings(holdingsGrid).find((h) => h.position === BROKER && h.symbol === BROKER_CASH)?.value ?? 0
+        : parseAccounts(accountsGrid).find((a) => a.name === f.account)?.value ?? 0;
+    const move = moveToTotal(current, total);
+    const label = f.account === BROKER ? "IBKR cash" : f.account;
+    if (!move) {
+      showBanner(`${esc(label)} is already ${eurCents(total)}. Nothing saved.`, "ok");
+    } else {
+      const { row, errors: e2 } = transactionRow({ ...f, type: move.type, cash: move.amount });
+      if (!row) throw new Error(e2.join(" "));
+      await saveTransaction(row);
+      showBanner(`Saved a ${move.type.toLowerCase()} of ${eurCents(move.amount)}: ${esc(label)} is now ${eurCents(total)}.`, "ok");
+    }
+    ls.set("pt.lastTx", JSON.stringify({ type: "DEPOSIT", account: f.account }));
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
+}
+
+async function deleteTransaction(t) {
+  // Re-read first: if the row has changed or moved since the list was drawn
+  // (another device edited the sheet), refuse rather than delete the wrong one.
+  const [grid] = await sheets.batchGet([RANGES.transactions]);
+  if (!sameTransaction(grid[t.row - 1], t.cells)) {
+    throw new Error("The Transactions tab changed since the app loaded it. Refresh and try again.");
+  }
   const meta = await freshMeta();
-  const tab = meta.tabs.History;
-  if (!tab) throw new Error("The sheet has no History tab.");
-  await sheets.ensureRows(tab, plan.lastRow);
-  await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
-  return plan;
+  const tab = meta.tabs.Transactions;
+  if (!tab) throw new Error("The sheet has no Transactions tab.");
+  await sheets.deleteRow(tab, t.row);
+}
+
+// ---------- privacy unlock (Face ID, with a PIN fallback) ----------
+// A privacy screen against people looking over your shoulder, not real
+// security: it gates the blur in this browser only. Face ID is used through
+// WebAuthn: the phone checks your face and the app only asks "did it pass?".
+const PASSKEY_KEY = "pt.passkey";
+const PIN_KEY = "pt.pin";
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+const randomBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
+
+async function faceIdAvailable() {
+  try {
+    return !!window.PublicKeyCredential && (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
+  } catch {
+    return false;
+  }
+}
+
+async function pinHash(pin) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`portfolio-tracker:${pin}`));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Before the first blur: register Face ID, or choose a PIN where Face ID isn't available. */
+async function setUpUnlock() {
+  if (ls.get(PASSKEY_KEY) || ls.get(PIN_KEY)) return true;
+  if (await faceIdAvailable()) {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: randomBytes(32),
+        rp: { name: "Portfolio", id: location.hostname },
+        user: { id: randomBytes(16), name: "portfolio-privacy", displayName: "Portfolio privacy screen" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+        timeout: 60000,
+      },
+    }).catch(() => null);
+    if (!cred) return false;
+    ls.set(PASSKEY_KEY, b64(cred.rawId));
+    return true;
+  }
+  const pin = prompt("Face ID isn't available here. Choose a PIN to show the amounts again.");
+  if (pin === null) return false;
+  if (!/^\d{4,}$/.test(pin.trim())) throw new Error("Use at least 4 digits.");
+  if (prompt("Enter the PIN again.") !== pin) throw new Error("The PINs didn't match. Nothing changed.");
+  ls.set(PIN_KEY, await pinHash(pin.trim()));
+  return true;
+}
+
+/** To unblur: Face ID (or the PIN). Returns true when it passed. */
+async function unlock() {
+  const id = ls.get(PASSKEY_KEY);
+  if (id) {
+    const ok = await navigator.credentials
+      .get({
+        publicKey: {
+          challenge: randomBytes(32),
+          rpId: location.hostname,
+          allowCredentials: [{ type: "public-key", id: unb64(id) }],
+          userVerification: "required",
+          timeout: 60000,
+        },
+      })
+      .then((c) => !!c && !!(new Uint8Array(c.response.authenticatorData)[32] & 0x04))
+      .catch(() => false);
+    if (!ok) alert("Face ID didn't pass. The amounts stay hidden. If it keeps failing, sign out and back in to reset it.");
+    return ok;
+  }
+  const hash = ls.get(PIN_KEY);
+  if (!hash) return true;
+  const pin = prompt("Enter your PIN to show the amounts.");
+  if (pin === null) return false;
+  if ((await pinHash(pin.trim())) !== hash) {
+    alert("Wrong PIN. If you forgot it, sign out and back in to reset it.");
+    return false;
+  }
+  return true;
 }
 
 // ---------- boot ----------
@@ -795,6 +1006,29 @@ function boot() {
   $("#tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-view]");
     if (b) go(b.dataset.view);
+  });
+  // Privacy: blur every amount on screen, remembered on this device.
+  const setPrivacy = (on) => {
+    document.documentElement.classList.toggle("privacy", on);
+    const b = $("#privacy");
+    b.setAttribute("aria-pressed", String(on));
+    b.setAttribute("aria-label", on ? "Show amounts" : "Hide amounts");
+    b.title = on ? "Show amounts" : "Hide amounts";
+  };
+  setPrivacy(ls.get("pt.privacy") === "1");
+  $("#privacy").addEventListener("click", async () => {
+    const on = !document.documentElement.classList.contains("privacy");
+    try {
+      if (on) {
+        if (!(await setUpUnlock())) return;
+      } else if (!(await unlock())) {
+        return;
+      }
+    } catch (err) {
+      return alert(err.message || String(err));
+    }
+    ls.set("pt.privacy", on ? "1" : "0");
+    setPrivacy(on);
   });
   $("#refresh").addEventListener("click", () => (getToken() ? load() : signIn(clientId())));
   window.addEventListener("scroll", onScroll, { passive: true });
