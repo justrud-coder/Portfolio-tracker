@@ -214,6 +214,74 @@ export function parseHistory(grid) {
   return out;
 }
 
+/** Chart series name for an account's asset class. */
+export const seriesName = (assetClass) => assetClass || "Other";
+
+/**
+ * Total value on every History date, split by asset class:
+ * [{date, total, parts: {Stocks: 1234, ...}}], oldest first.
+ *
+ * Each date is summed from its own rows, like the Monthly tab. A date with
+ * only a few rows (a real estate value saved from the app between snapshots)
+ * isn't a full snapshot: the accounts it leaves out keep their value from the
+ * last full one, so the total doesn't dip. A date counts as full when it has
+ * at least half as many accounts as the last full date.
+ */
+export function historySeries(history, accounts) {
+  const classOf = new Map(accounts.map((a) => [a.name, a.assetClass]));
+  const byDate = new Map();
+  for (const h of history) {
+    if (!h.date || !h.account) continue;
+    if (!byDate.has(h.date)) byDate.set(h.date, new Map());
+    byDate.get(h.date).set(h.account, h.value ?? 0);
+  }
+  const out = [];
+  let full = null; // Map account -> value of the last full snapshot
+  for (const date of [...byDate.keys()].sort()) {
+    const rows = byDate.get(date);
+    let values = rows;
+    if (full && rows.size < full.size / 2) values = new Map([...full, ...rows]);
+    else full = rows;
+    const parts = {};
+    let total = 0;
+    for (const [account, value] of values) {
+      const name = seriesName(classOf.get(account));
+      parts[name] = (parts[name] ?? 0) + value;
+      total += value;
+    }
+    out.push({ date, total, parts });
+  }
+  return out;
+}
+
+/** Today's live point for the series: active accounts' current values by class. */
+export function livePoint(accounts, date) {
+  const parts = {};
+  let total = 0;
+  for (const a of accounts.filter((x) => x.active)) {
+    const name = seriesName(a.assetClass);
+    parts[name] = (parts[name] ?? 0) + a.value;
+    total += a.value;
+  }
+  return { date, total, parts };
+}
+
+/**
+ * Points from `range` ("1m", "1y", "3y" or "all") before the last point. When
+ * that leaves fewer than two, the snapshot before the start is kept too, so
+ * the line still has somewhere to start from.
+ */
+export function pointsInRange(points, range) {
+  if (range === "all" || !points.length) return points;
+  const months = { "1m": 1, "1y": 12, "3y": 36 }[range] ?? 0;
+  if (!months) return points;
+  const from = addMonths(points[points.length - 1].date, -months);
+  let start = points.findIndex((p) => p.date >= from);
+  if (start < 0) start = points.length - 1;
+  if (start > 0 && points.length - start < 2) start -= 1;
+  return points.slice(start);
+}
+
 /** 1-based row after the last row that has anything in it (header counts). */
 export function nextFreeRow(grid) {
   let last = 0;
