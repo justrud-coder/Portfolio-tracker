@@ -14,11 +14,35 @@ function env(name) {
   return v;
 }
 
+/**
+ * Accept the key however it was pasted into the secret: the bare PEM, the PEM
+ * with literal "\n" sequences, wrapped in quotes, the whole `"private_key": "...",`
+ * line, or the entire JSON key file.
+ */
+export function credentials(emailRaw, keyRaw) {
+  let email = String(emailRaw).trim().replace(/^"|",?$/g, "");
+  let key = String(keyRaw).trim();
+  if (key.startsWith("{")) {
+    try {
+      const json = JSON.parse(key);
+      key = json.private_key ?? key;
+      email = json.client_email ?? email;
+    } catch {}
+  }
+  const m = key.match(/-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/);
+  if (!m) throw new Error("GOOGLE_PRIVATE_KEY doesn't contain a -----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY----- block");
+  const body = m[0]
+    .replace(/\\n/g, "\n")
+    .replace(/-----(BEGIN|END) PRIVATE KEY-----/g, "")
+    .replace(/[^A-Za-z0-9+/=]/g, "");
+  key = `-----BEGIN PRIVATE KEY-----\n${body.match(/.{1,64}/g).join("\n")}\n-----END PRIVATE KEY-----\n`;
+  return { email, key };
+}
+
 const b64url = (b) => Buffer.from(b).toString("base64url");
 
 async function accessToken() {
-  const email = env("GOOGLE_SERVICE_ACCOUNT_EMAIL");
-  const key = env("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
+  const { email, key } = credentials(env("GOOGLE_SERVICE_ACCOUNT_EMAIL"), env("GOOGLE_PRIVATE_KEY"));
   const now = Math.floor(Date.now() / 1000);
   const head = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claims = b64url(
@@ -75,7 +99,7 @@ async function main() {
   if (Object.keys(errors).length) process.exitCode = 1;
 }
 
-main().catch((e) => {
+if (import.meta.url === `file://${process.argv[1]}`) main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
