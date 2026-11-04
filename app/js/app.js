@@ -284,7 +284,7 @@ function renderHome(root) {
   if (s.lastSnapshot && today > s.lastSnapshot.date) points.push({ date: today, value: s.total });
 
   const changes = periodChanges(d.monthly, s.total, today);
-  const groups = overviewGroups(d.accounts, d.holdings, d.transactions);
+  const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
   const changeTile = (label, c, fromWord) => `
       <div class="card stat">
         <div class="label">${label}</div>
@@ -391,7 +391,10 @@ function donut(items) {
 function groupItems(items) {
   return items
     .map((i) => {
-      const gain = i.gain !== null && i.gain !== undefined ? `<div class="small ${tone(i.gain)} num">${signedEur(i.gain)}${i.gainPct !== null && i.gainPct !== undefined ? ` (${signedPct(i.gainPct)})` : ""}</div>` : "";
+      const c = i.change;
+      const gain = c
+        ? `<div class="small"><span class="${tone(c.value)} num">${signedEur(c.value)}${c.pct !== null ? ` (${signedPct(c.pct)})` : ""}</span> <span class="muted">${c.basis === "year" ? "1 yr" : "vs cost"}</span></div>`
+        : "";
       let meta;
       if (i.kind === "holding") {
         const h = i.holding;

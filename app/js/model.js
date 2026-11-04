@@ -289,12 +289,32 @@ export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
 export const GROUP_NAMES = { Pension: "III pillar pension" };
 
 /**
+ * Change of an account's value over the last year: against its last History
+ * snapshot on or before the same day a year ago. Null without one.
+ */
+export function annualChange(history, account, value, today) {
+  const yearAgo = addMonths(today, -12);
+  let base = null;
+  for (const h of history) if (h.account === account && h.date && h.date <= yearAgo && h.value !== null && (!base || h.date >= base.date)) base = h;
+  if (!base) return null;
+  const change = value - base.value;
+  return { value: change, pct: base.value ? change / base.value : null, from: base.date };
+}
+
+/**
  * Overview groups. Accounts valued from holdings are replaced by their
  * holdings (IBKR shows each stock; IBKR cash goes to Cash), and manual
  * accounts carry the date they last changed: their snapshot or a later
- * deposit or withdrawal.
+ * deposit or withdrawal. Each row's `change` is its value change over the
+ * last year where History allows it (an account, or a holdings account's
+ * only holding); IBKR stocks, which have no history of their own, show
+ * their gain against cost instead (`change.basis` is "year" or "cost").
  */
-export function overviewGroups(accounts, holdings, transactions = []) {
+export function overviewGroups(accounts, holdings, transactions = [], history = [], today = null) {
+  const yearly = (account, value) => {
+    const c = today ? annualChange(history, account, value, today) : null;
+    return c ? { ...c, basis: "year" } : null;
+  };
   const order = [...ACCOUNT_GROUPS, GROUP_NAMES.Pension];
   const groups = new Map(order.map((g) => [g, []]));
   const add = (cls, item) => {
@@ -311,23 +331,25 @@ export function overviewGroups(accounts, holdings, transactions = []) {
   }
   for (const a of accounts.filter((x) => x.active)) {
     if (a.valuation === "holdings") {
-      for (const h of holdings.filter((x) => x.position === a.name)) {
-        if (!h.units && !h.value) continue;
+      const shown = holdings.filter((x) => x.position === a.name && (x.units || x.value));
+      for (const h of shown) {
         const isCash = a.name === BROKER && h.symbol === BROKER_CASH;
+        let change = null;
+        if (shown.length === 1) change = yearly(a.name, h.value);
+        else if (!isCash && h.gain !== null && h.gain !== undefined) change = { value: h.gain, pct: h.gainPct ?? null, basis: "cost" };
         add(isCash ? "Cash" : a.assetClass, {
           kind: "holding",
           name: isCash ? "IBKR cash" : h.name || h.symbol,
           account: a.name,
           holding: h,
           value: h.value,
-          gain: isCash ? null : h.gain,
-          gainPct: isCash ? null : h.gainPct,
+          change,
         });
       }
     } else {
       const moved = lastMove.get(a.name);
       const updated = [a.lastSnapshot, moved].filter(Boolean).sort().pop() ?? null;
-      add(a.assetClass, { kind: "account", name: a.name, account: a.name, value: a.value, gain: a.gain, gainPct: a.gainPct, updated });
+      add(a.assetClass, { kind: "account", name: a.name, account: a.name, value: a.value, change: yearly(a.name, a.value), updated });
     }
   }
   return [...groups.entries()]
