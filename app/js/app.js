@@ -8,7 +8,6 @@ import {
   parseRetirement,
   retirementPlan,
   parseAccounts,
-  parseGoals,
   parseHistory,
   parseHoldings,
   parseLists,
@@ -27,7 +26,6 @@ const RANGES = {
   accounts: "Accounts!A1:L300",
   holdings: "Holdings!A1:M300",
   monthly: "Monthly!A1:Z2000",
-  goals: "Goals!A1:J100",
   lists: "Lists!A1:J60",
   history: "History!A1:D10000",
   transactions: "Transactions!A1:I10000",
@@ -80,7 +78,6 @@ function parseAll(raw) {
     accounts: parseAccounts(raw.accounts),
     holdings: parseHoldings(raw.holdings),
     monthly: parseMonthly(raw.monthly),
-    goals: parseGoals(raw.goals),
     retirement: parseRetirement(raw.retirement ?? []),
     lists,
     history: parseHistory(raw.history),
@@ -227,11 +224,13 @@ function go(view) {
 function render() {
   if (!state.data) return;
   $("#tabs").hidden = false;
+  // "goals" was the old goals tab; the retirement plan is the Goals tab now.
+  if (state.view === "goals") state.view = "retire";
   for (const b of $("#tabs").querySelectorAll("button")) {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, goals: renderGoals, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
+  const views = { home: renderHome, retire: renderRetire, add: renderAdd, snapshot: renderSnapshot };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -241,7 +240,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", goals: "Goals", retire: "Retirement", add: "New Transaction", snapshot: "Snapshot" };
+const TITLES = { home: "Portfolio", retire: "Goals", add: "New Transaction", snapshot: "Snapshot" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -384,33 +383,6 @@ function accountsList(d) {
           }</div></li>`,
         )
         .join("")}</ul></details></li>`;
-    })
-    .join("");
-}
-
-// ---------- goals ----------
-
-function renderGoals(root) {
-  const goals = state.data.goals;
-  if (!goals.length) {
-    root.innerHTML = `<div class="card"><p class="muted">No goals yet. Add one on the <strong>Goals</strong> tab of the sheet: a name, a measure (Total, Liquid, Stocks, …), a target and a date.</p></div>`;
-    return;
-  }
-  root.innerHTML = goals
-    .map((g) => {
-      const p = Math.max(0, Math.min(1, g.progress ?? 0));
-      return `
-      <section class="card goal">
-        <div class="card-head"><h2 style="color:var(--text);font-size:16px">${esc(g.goal)}</h2><strong class="num">${pct(g.progress)}</strong></div>
-        <div class="small muted">${esc(g.measure)}${g.targetDate ? ` · by ${shortDate(g.targetDate)}` : ""}</div>
-        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p * 100)}"><div style="width:${(p * 100).toFixed(1)}%"></div></div>
-        <dl class="figs">
-          <div><dt>Current</dt><dd class="num">${eur(g.current)}</dd></div>
-          <div><dt>Target</dt><dd class="num">${eur(g.target)}</dd></div>
-          <div><dt>Remaining</dt><dd class="num">${eur(g.remaining)}</dd></div>
-          <div><dt>Needed per month</dt><dd class="num">${g.perMonth === null ? (g.remaining === 0 ? "Reached" : "–") : eur(g.perMonth)}${g.perMonth !== null && g.monthsLeft ? ` <span class="muted small">× ${g.monthsLeft}</span>` : ""}</dd></div>
-        </dl>
-      </section>`;
     })
     .join("");
 }
