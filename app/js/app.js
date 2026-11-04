@@ -14,6 +14,7 @@ import {
   parseRetirement,
   sameTransaction,
   retirementPlan,
+  changedInputs,
   parseAccounts,
   parseHistory,
   planSnapshot,
@@ -443,7 +444,8 @@ function retireSummary(v, plan) {
       : plan.earliestAge <= v.retireAge
         ? `At this pace you could retire at <strong>${plan.earliestAge}</strong>.`
         : `At this pace you reach ${eur(v.spend)}/month at age <strong>${plan.earliestAge}</strong>.`;
-  return `
+  return {
+    hero: `
     <section class="card hero">
       <div class="label">Retire at ${esc(v.retireAge)} on ${eur(v.spend)}/month</div>
       <div class="value ${t}">${esc(plan.status)}</div>
@@ -451,8 +453,8 @@ function retireSummary(v, plan) {
       <div class="sub muted">In ${retireYear(plan)} euros.</div>
       ${progressBar(plan.progress, `Projected at ${esc(v.retireAge)}: <span class="num">${pct(plan.progress)}</span> of the target`, "Projected vs needed")}
       ${progressBar(plan.counted / plan.needed, `Today: <span class="num">${eur(plan.counted)}</span>, <span class="num">${pct(plan.counted / plan.needed)}</span> of the target in today's money (<span class="num">${eur(plan.needed)}</span>)`, "Today vs needed")}
-    </section>
-
+    </section>`,
+    details: `
     <section class="stats">
       <div class="card stat">
         <div class="label">Invest per month</div>
@@ -486,8 +488,38 @@ function retireSummary(v, plan) {
         <div><dt>At ${esc(v.retireAge)} with no new money (${retireYear(plan)} euros)</dt><dd class="num">${eur(plan.noNewMoneyFuture)}</dd></div>
       </dl>
       <p class="small muted" style="margin:6px 0 0">Targets and portfolio values are in the euros of the year you'd retire. Spending and pension are in today's money and rise with inflation; the monthly investment is a fixed amount. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
+    </section>`,
+    readout: `
+      <div><div class="label">Earliest age</div><div class="num">${plan.earliestAge === null ? `${esc(v.endAge)}+` : plan.earliestAge}</div></div>
+      <div><div class="label">Funded at ${esc(v.retireAge)}</div><div class="num ${plan.progress >= 1 ? "up" : ""}">${pct(plan.progress)}</div></div>
+      <div><div class="label">Need in ${retireYear(plan)}</div><div class="num">${eur(plan.neededFuture)}</div></div>`,
+  };
+}
+
+// What-if sliders: each drives the matching field in "Your plan". Nothing is
+// saved until "Save to sheet"; "Reset" puts the saved values back.
+const WHAT_IF = [
+  { key: "monthly", label: "Investing", step: 100, range: (s) => [0, Math.max(10000, Math.ceil((s.monthly * 2) / 1000) * 1000)], show: (x) => `${eur(x)}/mo` },
+  { key: "retireAge", label: "Retire at", step: 1, range: (s) => [Math.ceil(s.currentAge) + 1, Math.max(Math.ceil(s.currentAge) + 1, s.endAge - 1)], show: (x) => `age ${x}` },
+  { key: "spend", label: "Spend", step: 100, range: (s) => [500, Math.max(8000, Math.ceil((s.spend * 2) / 1000) * 1000)], show: (x) => `${eur(x)}/mo` },
+  { key: "returnPre", label: "Return before pension", step: 0.25, range: () => [0, 10], show: (x) => `${+x.toFixed(2)}% real` },
+  { key: "returnPost", label: "Return after pension", step: 0.25, range: () => [0, 10], show: (x) => `${+x.toFixed(2)}% real` },
+];
+
+function whatIfCard(saved) {
+  const toSlider = (k, x) => (RETIRE_FIELDS.find((f) => f.key === k).kind === "pct" ? x * 100 : x);
+  return `
+    <section class="card whatif">
+      <div class="card-head"><h2>What if</h2><button type="button" class="btn small secondary" id="whatIfReset" disabled>Reset</button></div>
+      <div class="readout" id="whatIfReadout" aria-live="polite"></div>
+      ${WHAT_IF.map((w) => {
+        const [min, max] = w.range(saved);
+        return `<label class="slider"><span class="slider-head"><span>${esc(w.label)}</span><span class="num" id="wi-${w.key}"></span></span><input type="range" name="wi-${w.key}" data-key="${w.key}" min="${min}" max="${max}" step="${w.step}" value="${esc(toSlider(w.key, saved[w.key]))}"></label>`;
+      }).join("")}
+      <p class="small muted" id="whatIfNote">Drag to try a different plan. Nothing is saved unless you tap Save to sheet.</p>
     </section>`;
 }
+
 
 function byAgeCard(v, plan) {
   const anchor = Math.max(v.retireAge, plan.earliestAge ?? v.retireAge);
@@ -514,6 +546,8 @@ function renderRetire(root) {
   }
   const show = (f, v) => (f.kind === "pct" ? +(v * 100).toFixed(2) : v);
   root.innerHTML = `
+    <div id="retireHero"></div>
+    ${whatIfCard(r.values)}
     <div id="retireSummary"></div>
     <section class="card">
       <h2>Your plan</h2>
@@ -548,14 +582,42 @@ function renderRetire(root) {
     }
     return { v, errors };
   };
+  const sliders = [...root.querySelectorAll('.whatif input[type="range"]')];
   const sync = () => {
     const { v, errors } = read();
-    if (!errors.length) $("#retireSummary").innerHTML = retireSummary(v, retirementPlan(v, countedValue(d.accounts, v.counted)));
+    if (!errors.length) {
+      const out = retireSummary(v, retirementPlan(v, countedValue(d.accounts, v.counted)));
+      $("#retireHero").innerHTML = out.hero;
+      $("#retireSummary").innerHTML = out.details;
+      $("#whatIfReadout").innerHTML = out.readout;
+      for (const s of sliders) {
+        const k = s.dataset.key;
+        const x = RETIRE_FIELDS.find((f) => f.key === k).kind === "pct" ? v[k] * 100 : v[k];
+        if (document.activeElement !== s) s.value = x;
+        $(`#wi-${k}`).textContent = WHAT_IF.find((w) => w.key === k).show(x);
+      }
+    }
+    const changed = changedInputs(r.values, v);
+    $("#whatIfReset").disabled = !changed.length;
+    $("#whatIfNote").textContent = changed.length
+      ? "Trying a different plan. Tap Save to sheet to keep it, or Reset to go back."
+      : "Drag to try a different plan. Nothing is saved unless you tap Save to sheet.";
     $("#retireErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
     return { v, errors };
   };
   form.addEventListener("input", sync);
   form.addEventListener("change", sync);
+  for (const s of sliders) {
+    s.addEventListener("input", () => {
+      form.elements[s.dataset.key].value = +(+s.value).toFixed(2);
+      sync();
+    });
+  }
+  $("#whatIfReset").onclick = () => {
+    for (const f of RETIRE_FIELDS) form.elements[f.key].value = show(f, r.values[f.key]);
+    form.elements.counted.value = r.values.counted;
+    sync();
+  };
   sync();
 
   form.onsubmit = async (e) => {

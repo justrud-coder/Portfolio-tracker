@@ -754,3 +754,13 @@ export function retirementByAge(p, counted) {
   }
   return out;
 }
+
+/** Plan inputs that differ from the saved ones (ignores float noise from sliders). */
+export function changedInputs(saved, values) {
+  return Object.keys(saved).filter((k) => {
+    const a = saved[k];
+    const b = values[k];
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) > 1e-9;
+    return a !== b;
+  });
+}
