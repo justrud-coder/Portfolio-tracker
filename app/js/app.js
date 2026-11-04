@@ -577,7 +577,7 @@ function renderAdd(root) {
   const options = d.holdings.find((h) => h.position === OPTIONS);
   const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
   const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
-  const recent = d.transactions.slice(-8).reverse();
+  const recent = d.transactions.slice(-10).reverse();
 
   root.innerHTML = `
     <section class="card">
