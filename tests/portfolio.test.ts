@@ -3,8 +3,8 @@ import { colIndex, colLetter, referencesColumn, shiftFormulaColumn } from "@/lib
 import { parsePortfolio, parseHeaderDate, toNumber } from "@/lib/portfolio";
 import { planSnapshot } from "@/lib/snapshot";
 import { buildDashboard } from "@/lib/stats";
-import { fetchQuote } from "@/lib/prices";
-import { holdingUpdates, parseHoldings } from "@/lib/holdings";
+import { fetchQuote, fetchQuoteWithFallback } from "@/lib/prices";
+import { holdingUpdates, parseHoldings, priceUpdates } from "@/lib/holdings";
 import { formulas, values } from "./fixture";
 
 describe("columns", () => {
@@ -163,5 +163,34 @@ describe("prices", () => {
 
   it("throws for unknown symbols", async () => {
     await expect(fetchQuote("NOPE", fake({}))).rejects.toThrow();
+  });
+});
+
+describe("daily price update", () => {
+  it("writes price and date only for web-priced holdings that got a quote", () => {
+    const h = parseHoldings([
+      ["Position", "Symbol", "Name", "Units", "Price source", "Last price", "Currency", "Price date"],
+      ["IBKR", "ISPA.DE", "iShares", 200, "yahoo", "", "EUR", ""],
+      ["IBKR", "VHYL.AS", "Vanguard", 80, "yahoo", "", "EUR", ""],
+      ["III pillar", "ARTEA-AA16", "Artea", 18763.33, "manual", 0.7034, "EUR", "2026-06-30"],
+    ]);
+    const data = priceUpdates(h, {
+      "ISPA.DE": { priceEur: 31.123456, date: "2026-11-04" },
+      "ARTEA-AA16": { priceEur: 1, date: "2026-11-04" },
+    });
+    expect(data).toEqual([
+      { range: "Holdings!F2", values: [[31.1235]] },
+      { range: "Holdings!H2", values: [["2026-11-04"]] },
+    ]);
+  });
+
+  it("falls back to Stooq for Xetra symbols when Yahoo fails", async () => {
+    const f = (async (url: string) =>
+      String(url).includes("stooq.com")
+        ? new Response("Symbol,Date,Time,Close\r\nISPA.DE,2026-11-04,17:36:12,31.05\r\n")
+        : new Response("blocked", { status: 429 })) as unknown as typeof fetch;
+    const q = await fetchQuoteWithFallback("ISPA.DE", f);
+    expect(q).toMatchObject({ priceEur: 31.05, date: "2026-11-04" });
+    await expect(fetchQuoteWithFallback("VHYL.AS", f)).rejects.toThrow(/429/);
   });
 });

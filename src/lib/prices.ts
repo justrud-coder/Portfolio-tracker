@@ -38,6 +38,37 @@ async function eurRate(currency: string, fetcher: Fetcher): Promise<number> {
   return meta.regularMarketPrice!;
 }
 
+/**
+ * Fallback for Xetra listings (symbols ending in .DE): Stooq's CSV quote, already in EUR.
+ * Format: Symbol,Date,Time,Close
+ */
+export async function fetchStooqQuote(symbol: string, fetcher: Fetcher = fetch): Promise<Quote> {
+  if (!/\.DE$/i.test(symbol)) throw new Error(`No fallback source for ${symbol}`);
+  const url = `https://stooq.com/q/l/?s=${encodeURIComponent(symbol.toLowerCase())}&f=sd2t2c&h&e=csv`;
+  const res = await fetcher(url, { headers: { "User-Agent": UA }, cache: "no-store" });
+  if (!res.ok) throw new Error(`Stooq returned ${res.status} for ${symbol}`);
+  const lines = (await res.text()).trim().split(/\r?\n/);
+  const [, date, , close] = (lines[1] ?? "").split(",");
+  const price = Number(close);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? "") || !Number.isFinite(price) || price <= 0) {
+    throw new Error(`Stooq has no price for ${symbol}`);
+  }
+  return { symbol, price, currency: "EUR", priceEur: price, date };
+}
+
+/** Yahoo first, then Stooq for Xetra listings. */
+export async function fetchQuoteWithFallback(symbol: string, fetcher: Fetcher = fetch): Promise<Quote> {
+  try {
+    return await fetchQuote(symbol, fetcher);
+  } catch (yahooError) {
+    try {
+      return await fetchStooqQuote(symbol, fetcher);
+    } catch {
+      throw yahooError;
+    }
+  }
+}
+
 /** Fetch the latest price for a Yahoo Finance symbol (e.g. VWCE.DE) and convert it to EUR. */
 export async function fetchQuote(symbol: string, fetcher: Fetcher = fetch): Promise<Quote> {
   const meta = await chartMeta(symbol, fetcher);
@@ -56,7 +87,7 @@ export async function fetchQuote(symbol: string, fetcher: Fetcher = fetch): Prom
 }
 
 export async function fetchQuotes(symbols: string[], fetcher: Fetcher = fetch) {
-  const results = await Promise.allSettled(symbols.map((s) => fetchQuote(s, fetcher)));
+  const results = await Promise.allSettled(symbols.map((s) => fetchQuoteWithFallback(s, fetcher)));
   const quotes: Record<string, Quote> = {};
   const errors: Record<string, string> = {};
   results.forEach((r, i) => {

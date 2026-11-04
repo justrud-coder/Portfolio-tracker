@@ -33,12 +33,18 @@ If you save again with the same date, only the position values in that column ar
 | IBKR | CASH | Cash held at IBKR | 0 | fixed | 1 | EUR | |
 | III pillar | ARTEA-AA16 | Artea Ambicingas Active 16+ | 18763.33 | manual | 0.7034 | EUR | 2026-06-30 |
 
-- `yahoo`: the price is fetched from Yahoo Finance and converted to EUR. Use Yahoo symbols such as `VWCE.DE` or `VHYL.AS`.
+- `yahoo`: the price is fetched from the web (Yahoo Finance, with Stooq as a fallback for `.DE` Xetra symbols) and converted to EUR. Use Yahoo symbols such as `VWCE.DE` or `VHYL.AS`. The daily GitHub Action writes it to `Last price` and `Price date`.
 - `google`: `Last price` is a `=GOOGLEFINANCE(...)` formula in the sheet (e.g. `AMS:VWCE`), so the sheet keeps the price current. The app reads it and never overwrites it.
 - `manual`: you type the unit price on the update screen.
 - `fixed`: the price is always `Last price`. Use it for cash, with Units as the amount.
 
 A position's value is the sum of its holdings, unless you press **Override** on the update screen. Positions without holdings are always entered by hand, prefilled with last month's value.
+
+## Daily prices (GitHub Action)
+
+`.github/workflows/update-prices.yml` runs `npm run update-prices` every weekday at 18:30 UTC, after European markets close. It fetches a price for every `yahoo` holding and writes it to the Holdings tab. You can also run it at any time from the repository's **Actions → Update prices → Run workflow**.
+
+It needs three repository secrets (**Settings → Secrets and variables → Actions → New repository secret**): `SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL` and `GOOGLE_PRIVATE_KEY`, with the same values as below.
 
 ## Setup
 

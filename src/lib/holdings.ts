@@ -79,3 +79,19 @@ export function holdingUpdates(holdings: Holding[]): { range: string; values: (s
   }
   return out;
 }
+
+/** Cell writes that store fetched web prices (EUR) and their dates on the Holdings tab. */
+export function priceUpdates(
+  holdings: Holding[],
+  quotes: Record<string, { priceEur: number; date: string }>,
+): { range: string; values: (string | number)[][] }[] {
+  const out: { range: string; values: (string | number)[][] }[] = [];
+  for (const h of holdings) {
+    const q = quotes[h.symbol];
+    if (h.source !== "yahoo" || h.row === undefined || !q) continue;
+    const n = h.row + 1;
+    out.push({ range: `${HOLDINGS_SHEET}!F${n}`, values: [[Math.round(q.priceEur * 10000) / 10000]] });
+    out.push({ range: `${HOLDINGS_SHEET}!H${n}`, values: [[q.date]] });
+  }
+  return out;
+}
