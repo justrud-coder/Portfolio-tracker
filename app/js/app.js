@@ -30,6 +30,12 @@ import {
   transactionValue,
   num,
   serialToIso,
+  GROUP_NAMES,
+  TARGET_CLASSES,
+  currentMix,
+  parseTargets,
+  rebalancePlan,
+  targetsGrid,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { lineChart } from "./chart.js";
@@ -44,6 +50,9 @@ const RANGES = {
 };
 // Read on its own so a sheet without a Retirement tab still loads.
 const RETIREMENT_RANGE = "Retirement!A1:C40";
+// The target mix for the Rebalance tab; the tab is created on first save.
+const TARGETS_RANGE = "Targets!A1:C40";
+const DEPOSIT_KEY = "pt.deposit";
 const CACHE_KEY = "pt.cache.v1";
 const VIEW_KEY = "pt.view";
 const RANGE_KEY = "pt.range";
@@ -91,6 +100,7 @@ function parseAll(raw) {
     holdings: parseHoldings(raw.holdings),
     monthly: parseMonthly(raw.monthly),
     retirement: parseRetirement(raw.retirement ?? []),
+    targets: parseTargets(raw.targets ?? []),
     lists,
     history: parseHistory(raw.history),
     historyNext: nextFreeRow(raw.history),
@@ -113,19 +123,23 @@ async function load({ quiet = false } = {}) {
   if (!quiet) setStatus("Updating…");
   try {
     const keys = Object.keys(RANGES);
-    const [values, meta, retirement] = await Promise.all([
-      sheets.batchGet(keys.map((k) => RANGES[k])),
-      sheets.meta(),
-      sheets.batchGet([RETIREMENT_RANGE]).then(
+    const optional = (range) =>
+      sheets.batchGet([range]).then(
         ([g]) => g,
         (e) => {
           if (e instanceof AuthError) throw e;
           return [];
         },
-      ),
+      );
+    const [values, meta, retirement, targets] = await Promise.all([
+      sheets.batchGet(keys.map((k) => RANGES[k])),
+      sheets.meta(),
+      optional(RETIREMENT_RANGE),
+      optional(TARGETS_RANGE),
     ]);
     const raw = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
     raw.retirement = retirement;
+    raw.targets = targets;
     state.data = parseAll(raw);
     state.meta = meta;
     state.loadedAt = Date.now();
@@ -244,7 +258,7 @@ function render() {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, retire: renderRetire, add: renderAdd };
+  const views = { home: renderHome, retire: renderRetire, rebalance: renderRebalance, add: renderAdd };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -254,7 +268,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", retire: "Goals", add: "New Transaction" };
+const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", add: "New Transaction" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -636,6 +650,206 @@ function renderRetire(root) {
       });
       await sheets.write(data);
       showBanner(`Saved your plan to the Retirement tab.${missing.length ? ` Not saved (no row in the sheet): ${esc(missing.join(", "))}.` : ""}`, "ok");
+      await load({ quiet: true });
+    } catch (err) {
+      if (err instanceof AuthError) needSignIn();
+      else showBanner(esc(err.message || String(err)), "error");
+      btn.disabled = false;
+      btn.textContent = "Save to sheet";
+    }
+  };
+}
+
+// ---------- rebalance ----------
+
+const className = (k) => GROUP_NAMES[k] ?? k;
+const pctText = (v) => (v ? String(+(v * 100).toFixed(2)) : "");
+
+/** A bar of the current share with a tick at the target share. */
+function mixBar(share, target, color) {
+  const w = (v) => `${(Math.max(0, Math.min(1, v)) * 100).toFixed(1)}%`;
+  return `<div class="mix-bar" aria-hidden="true"><div class="fill" style="width:${w(share)};background:${color}"></div>${target ? `<div class="tick" style="left:${w(target)}"></div>` : ""}</div>`;
+}
+
+function mixRows(items, colorOf, sell) {
+  return items
+    .map((i) => {
+      const off = i.share - i.target;
+      const status = !i.target ? "no target" : Math.abs(off) < 0.0025 ? "on target" : off > 0 ? `${pct(off)} over` : `${pct(-off)} under`;
+      const moveText = i.move > 0.5 ? `<span class="up num">+${eur(i.move)}</span>` : sell && i.move < -0.5 ? `<span class="down num">−${eur(-i.move)}</span>` : `<span class="muted">nothing</span>`;
+      return `<li class="mix-row">
+        <div class="mix-top"><span class="name">${esc(i.label)}</span><span class="num">${eur(i.value)}</span></div>
+        ${mixBar(i.share, i.target, colorOf(i))}
+        <div class="mix-sub"><span><span class="num">${pct(i.share)}</span> now · target <span class="num">${pct(i.target)}</span> · ${status}</span><span>${moveText}</span></div>
+      </li>`;
+    })
+    .join("");
+}
+
+/** The buy list: ETFs one by one when stock targets are set, then the other classes. */
+function buyList(plan, sell) {
+  const lines = [];
+  for (const c of plan.classes) {
+    if (c.key === "Stocks" && plan.hasStockTargets) {
+      for (const s of plan.stocks) {
+        if (!(s.move > 0.5 || (sell && s.move < -0.5))) continue;
+        const units = s.move > 0 ? (s.units ? `≈ ${s.units} unit${s.units === 1 ? "" : "s"} at ${eurCents(s.price)}` : s.price ? `less than 1 unit at ${eurCents(s.price)}` : "") : s.price ? `≈ ${Math.floor(-s.move / s.price)} units` : "";
+        lines.push({ name: s.key, meta: [s.name, units].filter(Boolean).join(" · "), move: s.move });
+      }
+    } else if (c.move > 0.5 || (sell && c.move < -0.5)) {
+      const where = { Stocks: "At IBKR", Cash: "Savings or a term deposit", Pension: "Artea, III pillar" }[c.key] ?? "";
+      lines.push({ name: className(c.key), meta: where, move: c.move, out: c.key === "Cash" ? "Move out" : "Sell" });
+    }
+  }
+  if (!lines.length) return `<p class="muted" style="margin:0">Nothing to do: the mix is on target.</p>`;
+  return `<ul class="list">${lines
+    .sort((a, b) => b.move - a.move)
+    .map((l) => `<li><div class="row"><div><div class="name">${esc(l.name)}</div>${l.meta ? `<div class="meta">${esc(l.meta)}</div>` : ""}</div><div class="right"><div class="num ${l.move < 0 ? "down" : ""}">${l.move < 0 ? `${l.out ?? "Sell"} ${eur(-l.move)}` : eur(l.move)}</div></div></div></li>`)
+    .join("")}</ul>`;
+}
+
+function rebalanceResult(plan, sell) {
+  const outside = plan.outside.length
+    ? `<p class="small muted" style="margin:12px 0 0">Not in the plan: ${plan.outside.map((o) => `${esc(className(o.key))} <span class="num">${eur(o.value)}</span>`).join(", ")}. A deposit can't buy these, so they're left out. Give one a target below to count it.</p>`
+    : "";
+  const reach =
+    !sell && plan.reachAll > 1
+      ? `<p class="small muted" style="margin:12px 0 0">Deposits of <span class="num">${eur(plan.reachAll)}</span> in total would bring every class to target without selling.</p>`
+      : "";
+  const stockShown = plan.hasStockTargets && plan.stocks.length;
+  return `
+    <section class="card">
+      <h2>${sell ? "Trades to reach the target" : `What to buy with ${eur(plan.deposit)}`}</h2>
+      ${buyList(plan, sell)}
+      ${reach}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Mix by class</h2><span class="group-total num">${eur(plan.base)}</span></div>
+      <ul class="mix">${mixRows(
+        plan.classes.map((c) => ({ ...c, label: className(c.key) })),
+        (i) => GROUP_COLORS[i.label] ?? "var(--accent)",
+        sell,
+      )}</ul>
+      ${outside}
+    </section>
+
+    ${
+      stockShown
+        ? `<section class="card">
+      <div class="card-head"><h2>Stocks at IBKR</h2><span class="group-total num">${eur(plan.stocks.reduce((s, x) => s + x.value, 0))}</span></div>
+      <ul class="mix">${mixRows(
+        plan.stocks.map((s) => ({ ...s, label: `${s.key}` })),
+        () => GROUP_COLORS.Stocks,
+        sell,
+      )}</ul>
+      <p class="small muted" style="margin:12px 0 0">Shares are of the stocks total. ${sell ? "" : `The ${eur(plan.stockMoney)} for stocks is split so the most underweight ETF gets it first.`}</p>
+    </section>`
+        : ""
+    }`;
+}
+
+function renderRebalance(root) {
+  const d = state.data;
+  const saved = d.targets;
+  const mix = currentMix(d.accounts, d.holdings);
+  const symbols = mix.stocks.map((s) => s.key);
+  const stockKeys = [...new Set([...symbols, ...Object.keys(saved.stocks)])];
+  const classKeys = [...new Set([...TARGET_CLASSES, ...Object.keys(saved.classes), ...Object.keys(mix.classes)])];
+  const fallback = d.retirement.values.monthly > 0 ? d.retirement.values.monthly : 1000;
+  const deposit = num(ls.get(DEPOSIT_KEY)) ?? fallback;
+  const sell = ls.get("pt.rebalSell") === "1";
+
+  const input = (prefix, k, v) =>
+    `<label class="field">${esc(prefix === "c" ? className(k) : k)}<input name="${prefix}:${esc(k)}" inputmode="decimal" autocomplete="off" placeholder="–" value="${esc(pctText(v))}"><span class="unit">%</span></label>`;
+
+  root.innerHTML = `
+    <section class="card hero">
+      <form id="deposit" novalidate>
+        <label class="field">Next deposit (€)<input name="amount" inputmode="decimal" autocomplete="off" value="${esc(deposit)}"></label>
+        <div class="field">Mode
+          <div class="seg" role="radiogroup" aria-label="Mode">
+            <label><input type="radio" name="mode" value="buy" ${sell ? "" : "checked"}><span>Buy only</span></label>
+            <label><input type="radio" name="mode" value="sell" ${sell ? "checked" : ""}><span>Buy and sell</span></label>
+          </div>
+        </div>
+      </form>
+      ${saved.found ? "" : `<p class="small muted" style="margin:8px 0 0">These are starting targets. Change them below and save them to the sheet.</p>`}
+    </section>
+    <div id="rebalResult"></div>
+    <section class="card">
+      <h2>Target mix</h2>
+      <form id="targets" novalidate>
+        <p class="small muted">By asset class. Leave a class blank to keep it out of the plan.</p>
+        ${classKeys.map((k) => input("c", k, saved.classes[k])).join("")}
+        <div class="total-line"><span>Total</span><span id="classSum" class="num"></span></div>
+        <p class="small muted" style="margin-top:14px">Stocks at IBKR, as shares of the stocks part.</p>
+        ${stockKeys.map((k) => input("s", k, saved.stocks[k])).join("")}
+        <div class="total-line"><span>Total</span><span id="stockSum" class="num"></span></div>
+        <ul class="errors" id="targetErrors"></ul>
+        <button class="btn" id="targetsSave">Save to sheet</button>
+      </form>
+    </section>`;
+
+  const depForm = $("#deposit");
+  const tForm = $("#targets");
+  const read = () => {
+    const f = new FormData(tForm);
+    const targets = { classes: {}, stocks: {} };
+    const errors = [];
+    for (const [name, raw] of f.entries()) {
+      const [prefix, ...rest] = name.split(":");
+      const key = rest.join(":");
+      const v = String(raw).trim().replace(",", ".").replace("%", "");
+      if (!v) continue;
+      const n = num(v);
+      if (n === null || n < 0 || n > 100) {
+        errors.push(`${prefix === "c" ? className(key) : key}: enter a share from 0 to 100.`);
+        continue;
+      }
+      if (n > 0) (prefix === "c" ? targets.classes : targets.stocks)[key] = n / 100;
+    }
+    const sum = (m) => Object.values(m).reduce((s, x) => s + x, 0);
+    const cs = sum(targets.classes);
+    const ss = sum(targets.stocks);
+    if (!cs) errors.push("Give at least one asset class a target.");
+    else if (Math.abs(cs - 1) > 0.0001) errors.push(`The asset classes add up to ${+(cs * 100).toFixed(2)}%. Make them 100%.`);
+    if (ss && Math.abs(ss - 1) > 0.0001) errors.push(`The stocks add up to ${+(ss * 100).toFixed(2)}%. Make them 100%.`);
+    $("#classSum").textContent = `${+(cs * 100).toFixed(2)}%`;
+    $("#stockSum").textContent = ss ? `${+(ss * 100).toFixed(2)}%` : "–";
+    return { targets, errors };
+  };
+  const sync = () => {
+    const { targets, errors } = read();
+    const df = new FormData(depForm);
+    const amount = Math.max(0, num(String(df.get("amount") ?? "").replace(",", ".")) ?? 0);
+    const sellMode = df.get("mode") === "sell";
+    ls.set(DEPOSIT_KEY, String(amount));
+    ls.set("pt.rebalSell", sellMode ? "1" : "0");
+    // Sums that don't reach 100% yet still show a plan, scaled to 100%.
+    if (Object.keys(targets.classes).length) $("#rebalResult").innerHTML = rebalanceResult(rebalancePlan(mix, targets, amount, { sell: sellMode }), sellMode);
+    $("#targetErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+    return { targets, errors };
+  };
+  depForm.addEventListener("input", sync);
+  depForm.addEventListener("change", sync);
+  depForm.onsubmit = (e) => e.preventDefault();
+  tForm.addEventListener("input", sync);
+  sync();
+
+  tForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const { targets, errors } = sync();
+    if (errors.length) return;
+    const btn = $("#targetsSave");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const meta = await freshMeta();
+      if (!meta.tabs.Targets) meta.tabs.Targets = await sheets.addTab("Targets");
+      const grid = targetsGrid(targets, symbols, 40);
+      await sheets.write([{ range: `Targets!A1:C${grid.length}`, values: grid }]);
+      showBanner("Saved your target mix to the Targets tab.", "ok");
       await load({ quiet: true });
     } catch (err) {
       if (err instanceof AuthError) needSignIn();

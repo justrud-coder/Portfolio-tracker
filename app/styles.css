@@ -391,7 +391,7 @@ form > p.small { padding: 0 0 10px; margin: 0 !important; }
 /* ---------- tab bar ---------- */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
   background: var(--bar-bg);
   backdrop-filter: saturate(180%) blur(20px);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
@@ -447,3 +447,16 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
   filter: blur(9px); transition: filter 0.2s;
 }
 .privacy .num, .privacy .chart { user-select: none; pointer-events: none; }
+
+/* Rebalance: current share bars with a tick at the target */
+.mix { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
+.mix-top, .mix-sub { display: flex; justify-content: space-between; gap: 10px; }
+.mix-top { font-size: 15px; font-weight: 600; }
+.mix-sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.mix-sub > span:last-child { font-weight: 600; flex: none; }
+.mix-bar { position: relative; height: 8px; background: var(--bar-track); border-radius: 999px; margin-top: 8px; }
+.mix-bar .fill { height: 100%; border-radius: 999px; }
+.mix-bar .tick { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--text); }
+.field .unit { color: var(--muted); flex: none; }
+.hero form > label.field:first-child { border-top: 0; }
+.hero .field input { font-weight: 700; font-size: 18px; }

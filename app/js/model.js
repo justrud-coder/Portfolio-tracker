@@ -764,3 +764,168 @@ export function changedInputs(saved, values) {
     return a !== b;
   });
 }
+
+// ---------- rebalancing ----------
+
+/** Asset classes a target can be set for, in display order. */
+export const TARGET_CLASSES = ["Stocks", "Cash", "Pension", "Real estate", "Options"];
+
+/**
+ * Starting mix until targets are saved to the sheet. Real estate and options
+ * are left out: a deposit can't buy them, so they aren't part of the plan.
+ */
+export const TARGET_DEFAULTS = {
+  classes: { Stocks: 0.7, Cash: 0.2, Pension: 0.1 },
+  stocks: { "VWCE.DE": 0.7, "VHYL.AS": 0.15, "ISPA.DE": 0.15 },
+};
+
+/** Shares as fractions: 70%, 0.7 and "70" all mean 70%. Blank is null. */
+function share(v) {
+  const n = typeof v === "string" ? num(v.replace("%", "")) : num(v);
+  if (n === null) return null;
+  return typeof v === "string" && v.includes("%") ? n / 100 : n > 1 ? n / 100 : n;
+}
+
+/**
+ * Targets tab: Level | Name | Target %. Level "Class" rows hold the mix by
+ * asset class; level "Stocks" rows split the stocks share by IBKR symbol.
+ * A blank or zero target leaves that class or stock out of the plan.
+ */
+export function parseTargets(grid) {
+  const c = columns(grid?.[0], { level: "Level", name: "Name", target: ["Target %", "Target"] });
+  if (c.level < 0 || c.name < 0 || c.target < 0) return { ...structuredClone(TARGET_DEFAULTS), found: false };
+  const out = { classes: {}, stocks: {}, found: true };
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const level = norm(cell(row, c.level));
+    const name = text(row, c.name);
+    const t = share(cell(row, c.target));
+    if (!name || !t || t < 0) continue;
+    if (level === "class") out.classes[name] = t;
+    else if (level === "stocks" || level === "stock") out.stocks[name.toUpperCase()] = t;
+  }
+  return out;
+}
+
+/** Rows for the Targets tab (header included), padded with blanks to `rows`. */
+export function targetsGrid(targets, stockSymbols = [], rows = 30) {
+  const pctText = (v) => (v ? `${+(v * 100).toFixed(2)}%` : "");
+  const out = [["Level", "Name", "Target %"]];
+  const classes = [...new Set([...TARGET_CLASSES, ...Object.keys(targets.classes)])];
+  for (const k of classes) out.push(["Class", k, pctText(targets.classes[k])]);
+  const symbols = [...new Set([...stockSymbols, ...Object.keys(targets.stocks)])];
+  for (const s of symbols) out.push(["Stocks", s, pctText(targets.stocks[s])]);
+  while (out.length < rows) out.push(["", "", ""]);
+  return out;
+}
+
+/**
+ * What the portfolio holds now, for rebalancing: active accounts by asset
+ * class (IBKR cash counts as Cash), and the IBKR stocks one by one.
+ */
+export function currentMix(accounts, holdings) {
+  const classes = {};
+  const add = (k, v) => (classes[k] = (classes[k] ?? 0) + (v || 0));
+  const stocks = [];
+  for (const a of accounts.filter((x) => x.active)) {
+    if (a.name === BROKER && a.valuation === "holdings") {
+      for (const h of holdings.filter((x) => x.position === BROKER)) {
+        if (h.symbol === BROKER_CASH) add("Cash", h.value);
+        else {
+          add(a.assetClass, h.value);
+          stocks.push({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0, price: h.price });
+        }
+      }
+    } else {
+      add(a.assetClass, a.value);
+    }
+  }
+  return { classes, stocks };
+}
+
+/**
+ * Split `amount` across items without selling anything: money goes to the
+ * items furthest below target first, filling them up to the same share of
+ * target, so the mix ends as close to the targets as a buy-only deposit can.
+ * Items: [{ key, value, target }] with targets summing to 1. Returns key -> buy.
+ */
+export function buyOnly(items, amount) {
+  const out = Object.fromEntries(items.map((i) => [i.key, 0]));
+  const live = items.filter((i) => i.target > 0);
+  if (!(amount > 0) || !live.length) return out;
+  // Find the level L with sum(max(0, target*L - value)) = amount.
+  const sorted = [...live].sort((a, b) => a.value / a.target - b.value / b.target);
+  let tSum = 0;
+  let vSum = 0;
+  let level = 0;
+  for (let k = 0; k < sorted.length; k++) {
+    tSum += sorted[k].target;
+    vSum += sorted[k].value;
+    level = (amount + vSum) / tSum;
+    const next = sorted[k + 1];
+    if (!next || level <= next.value / next.target) break;
+  }
+  for (const i of live) out[i.key] = Math.max(0, i.target * level - i.value);
+  return out;
+}
+
+/** Buys (positive) and sells (negative) that put the items exactly on target. */
+export function fullRebalance(items, amount) {
+  const total = items.reduce((s, i) => s + i.value, 0) + amount;
+  return Object.fromEntries(items.map((i) => [i.key, (i.target || 0) * total - i.value]));
+}
+
+const normalize = (map) => {
+  const sum = Object.values(map).reduce((s, v) => s + (v > 0 ? v : 0), 0);
+  return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, sum && v > 0 ? v / sum : 0]));
+};
+
+/**
+ * The rebalancing plan for a deposit. Only classes with a target are in the
+ * plan; the rest are listed as `outside`. The stocks share is then split by
+ * IBKR symbol. `sell` true puts everything exactly on target instead.
+ */
+export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
+  const split = sell ? fullRebalance : buyOnly;
+  const classT = normalize(targets.classes);
+  const inPlan = Object.keys(classT).filter((k) => classT[k] > 0);
+  const classItems = inPlan.map((k) => ({ key: k, value: mix.classes[k] ?? 0, target: classT[k] }));
+  const base = classItems.reduce((s, i) => s + i.value, 0);
+  const after = base + deposit;
+  const classMoves = split(classItems, deposit);
+  const classes = classItems.map((i) => ({
+    ...i,
+    share: base ? i.value / base : 0,
+    move: classMoves[i.key],
+    afterShare: after ? (i.value + classMoves[i.key]) / after : 0,
+  }));
+  const outside = Object.entries(mix.classes)
+    .filter(([k, v]) => !inPlan.includes(k) && v)
+    .map(([key, value]) => ({ key, value }));
+
+  // Within stocks: symbols with a target; held ones without one are shown too.
+  const stockT = normalize(targets.stocks);
+  const known = new Map(mix.stocks.map((s) => [s.key, s]));
+  const keys = [...new Set([...mix.stocks.map((s) => s.key), ...Object.keys(stockT).filter((k) => stockT[k] > 0)])];
+  const stockItems = keys.map((k) => ({ key: k, name: known.get(k)?.name ?? k, price: known.get(k)?.price ?? null, value: known.get(k)?.value ?? 0, target: stockT[k] ?? 0 }));
+  const stockBase = stockItems.reduce((s, i) => s + i.value, 0);
+  const stockMoney = classMoves.Stocks ?? 0;
+  const hasStockTargets = stockItems.some((i) => i.target > 0);
+  const stockMoves = hasStockTargets ? split(stockItems, stockMoney) : {};
+  const stockAfter = stockBase + stockMoney;
+  const stocks = stockItems.map((i) => {
+    const move = stockMoves[i.key] ?? 0;
+    return {
+      ...i,
+      share: stockBase ? i.value / stockBase : 0,
+      move,
+      afterShare: stockAfter ? (i.value + move) / stockAfter : 0,
+      units: i.price > 0 && move > 0 ? Math.floor(move / i.price) : null,
+    };
+  });
+
+  // Deposits needed to reach the target mix without selling anything.
+  const reachAll = classItems.length ? Math.max(0, Math.max(...classItems.map((i) => i.value / i.target)) - base) : 0;
+
+  return { base, deposit, classes, outside, stocks, stockMoney, hasStockTargets, reachAll };
+}
