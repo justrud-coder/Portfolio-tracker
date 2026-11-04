@@ -1,7 +1,5 @@
 node_modules
-.next
 .env
 .env.local
-*.tsbuildinfo
-next-env.d.ts
-.vercel
+*.json.key
+service-account*.json
