@@ -285,8 +285,8 @@ function renderHome(root) {
 
   const changes = periodChanges(d.monthly, s.total, today);
   const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
-  const changeTile = (label, c, fromWord) => `
-      <div class="card stat">
+  const changeTile = (label, c, fromWord, wide = false) => `
+      <div class="card stat${wide ? " wide" : ""}">
         <div class="label">${label}</div>
         <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
         <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
@@ -302,6 +302,7 @@ function renderHome(root) {
     <section class="stats">
       ${changeTile("Last month", changes.month, "since")}
       ${changeTile("This year", changes.ytd, "since")}
+      ${changeTile("Last 12 months", changes.year, "since", true)}
     </section>
 
     <section class="card">

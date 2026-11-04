@@ -279,6 +279,7 @@ export function periodChanges(monthly, total, today) {
   return {
     month: changeSince(monthly, total, endOfPreviousMonth(today)),
     ytd: changeNear(monthly, total, `${year - 1}-12-31`, today),
+    year: changeNear(monthly, total, addMonths(today, -12), today),
   };
 }
 
@@ -289,13 +290,19 @@ export const ACCOUNT_GROUPS = ["Stocks", "Cash", "Real estate", "Options"];
 export const GROUP_NAMES = { Pension: "III pillar pension" };
 
 /**
- * Change of an account's value over the last year: against its last History
- * snapshot on or before the same day a year ago. Null without one.
+ * Change of an account's value over the last 12 months: against its History
+ * snapshot closest to the same day a year ago (none from the last 6 months).
+ * Null without one.
  */
 export function annualChange(history, account, value, today) {
   const yearAgo = addMonths(today, -12);
+  const cutoff = addMonths(today, -6);
+  const gap = (d) => Math.abs(dayNumber(d) - dayNumber(yearAgo));
   let base = null;
-  for (const h of history) if (h.account === account && h.date && h.date <= yearAgo && h.value !== null && (!base || h.date >= base.date)) base = h;
+  for (const h of history) {
+    if (h.account !== account || !h.date || h.date > cutoff || h.value === null) continue;
+    if (!base || gap(h.date) < gap(base.date)) base = h;
+  }
   if (!base) return null;
   const change = value - base.value;
   return { value: change, pct: base.value ? change / base.value : null, from: base.date };
