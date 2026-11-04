@@ -1,8 +1,8 @@
-// Fetch web prices for every "yahoo" or "artea" holding and write them to the Holdings tab.
+// Fetch web prices for every "yahoo" holding and write them to the Holdings tab.
 // Run by the daily GitHub Action; also runnable locally with `npm run update-prices`.
 // No dependencies: the service-account token is signed with Node's crypto.
 import { createSign } from "node:crypto";
-import { PRICED_SOURCES, fetchQuotes, plausible, priceUpdates } from "./prices.mjs";
+import { fetchQuotes, priceUpdates } from "./prices.mjs";
 
 // The "Portfolio tracker" sheet. Override with the SHEET_ID environment variable.
 export const DEFAULT_SHEET_ID = "1TtvBSaAhSnduHRo9hwwuhxKZTLcPnm2EqHr76pMd0vM";
@@ -84,23 +84,13 @@ async function main() {
   const header = (grid[0] ?? []).map((h) => String(h).trim().toLowerCase());
   const si = header.indexOf("symbol");
   const pi = header.indexOf("price source");
-  const lpi = header.indexOf("last price");
-  const priced = grid.slice(1).filter((r) => PRICED_SOURCES.includes(String(r[pi] ?? "").trim().toLowerCase()) && String(r[si] ?? "").trim());
-  const pairs = [...new Map(priced.map((r) => [String(r[si]).trim(), String(r[pi]).trim().toLowerCase()])).entries()];
-  if (!pairs.length) {
-    console.log(`No holdings with price source ${PRICED_SOURCES.join(" or ")}. Nothing to do.`);
+  const symbols = [...new Set(grid.slice(1).filter((r) => String(r[pi] ?? "").trim().toLowerCase() === "yahoo").map((r) => String(r[si]).trim()))].filter(Boolean);
+  if (!symbols.length) {
+    console.log('No holdings with price source "yahoo". Nothing to do.');
     return;
   }
 
-  const { quotes, errors } = await fetchQuotes(pairs);
-  // Don't write a price that jumped implausibly: the page was probably misread.
-  for (const r of priced) {
-    const s = String(r[si]).trim();
-    if (quotes[s] && !plausible(r[lpi], quotes[s].priceEur)) {
-      errors[s] = `fetched ${quotes[s].priceEur} EUR but the sheet has ${r[lpi]}; not written`;
-      delete quotes[s];
-    }
-  }
+  const { quotes, errors } = await fetchQuotes(symbols);
   for (const [s, q] of Object.entries(quotes)) console.log(`${s}: ${q.priceEur.toFixed(4)} EUR (${q.price} ${q.currency}, ${q.date})`);
   for (const [s, e] of Object.entries(errors)) console.error(`${s}: FAILED – ${e}`);
 

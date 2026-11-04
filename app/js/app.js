@@ -613,6 +613,7 @@ function renderAdd(root) {
           <label class="field" data-for="newfund">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
           <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
           <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
+          <label class="field">New unit value (€)<input name="pensionValue" inputmode="decimal" autocomplete="off" placeholder="optional"></label>
         </div>
         <div class="two" data-for="options">
           <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
@@ -704,7 +705,17 @@ function renderAdd(root) {
     } else if (pension) {
       const units = num(f.get("pensionUnits"));
       const cash = num(f.get("pensionCash"));
-      if (units && cash) msg = `Unit price ${(cash / units).toLocaleString("en-IE", { maximumFractionDigits: 4 })} €. It becomes the fund's latest price.`;
+      const value = num(String(f.get("pensionValue") ?? "").replace(",", "."));
+      const fund = funds.find((h) => h.symbol === f.get("fund"));
+      const unit = (x) => `${x.toLocaleString("en-IE", { maximumFractionDigits: 6 })} €`;
+      if (value && fund) {
+        const held = (num(fund.units) ?? 0) + (units ?? 0);
+        msg = `${held.toLocaleString("en-IE", { maximumFractionDigits: 2 })} units × ${unit(value)} = ${eurCents(held * value)} (now ${eurCents(fund.value ?? 0)}).`;
+      } else if (units && cash) {
+        msg = `Unit price ${unit(cash / units)}. It becomes the fund's latest price.`;
+      } else if (fund) {
+        msg = `Unit value now ${unit(num(fund.price) ?? 0)}. Enter a new unit value to update the total, units to add a contribution, or both.`;
+      }
     } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
       const acct = f.get("account");
       const current = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
@@ -731,6 +742,13 @@ function renderAdd(root) {
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
     if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
+    if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
+      return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
+    const pensionValue = num(String(f.pensionValue ?? "").replace(",", "."));
+    if (f.type === "PENSION" && String(f.pensionValue ?? "").trim() && !(pensionValue > 0)) {
+      $("#txErrors").innerHTML = "<li>New unit value must be more than 0.</li>";
+      return;
+    }
     const pension = f.type === "PENSION";
     const newFund = pension && f.fund === NEW_FUND;
     const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
@@ -743,8 +761,8 @@ function renderAdd(root) {
     try {
       let what;
       if (pension) {
-        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null);
-        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null, pensionValue);
+        what = `${num(row[4])} units of ${esc(fund.name)}${pensionValue ? ` and a unit value of ${pensionValue} €` : ""}`;
         ls.set("pt.lastTx", JSON.stringify({ type: f.type, fund: fund.symbol }));
       } else {
         await saveTransaction(row);
@@ -782,11 +800,12 @@ async function saveTransaction(row) {
  * Save III pillar units. A new fund gets its own Holdings row first. The unit
  * price paid becomes the fund's latest price unless a newer one is already set.
  */
-async function savePension(row, newFundName) {
+async function savePension(row, newFundName, unitValue = null) {
   const [holdings] = await sheets.batchGet([RANGES.holdings]);
   const meta = await freshMeta();
   const date = row[0];
-  const price = row[5];
+  // A unit value typed in wins over the price worked out from the amount paid.
+  const price = unitValue ?? row[5];
   let fund;
   if (newFundName) {
     const tab = meta.tabs.Holdings;
@@ -809,6 +828,37 @@ async function savePension(row, newFundName) {
   }
   await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
   return fund;
+}
+
+/** III pillar with only a new unit value: update the fund's latest price, no transaction. */
+async function savePensionValue(f, fund) {
+  const value = num(String(f.pensionValue ?? "").replace(",", "."));
+  const errors = [];
+  if (!fund) errors.push("Pick a fund.");
+  if (!String(f.pensionValue ?? "").trim()) errors.push("Enter units and the amount paid, a new unit value, or both.");
+  else if (!(value > 0)) errors.push("New unit value must be more than 0.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  if (errors.length) return;
+  const btn = $("#txSave");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    // Re-read so the right Holdings row is written even if rows moved.
+    const [holdings] = await sheets.batchGet([RANGES.holdings]);
+    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === fund.symbol);
+    if (i < 0) throw new Error(`The fund ${fund.symbol} isn't on the Holdings tab any more. Refresh and try again.`);
+    await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
+    ls.set("pt.lastTx", JSON.stringify({ type: "PENSION", fund: fund.symbol }));
+    const units = num(fund.units) ?? 0;
+    showBanner(`Saved a unit value of ${value} € for ${esc(fund.name || fund.symbol)}: ${eurCents(units * value)} in total.`, "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else showBanner(esc(err.message || String(err)), "error");
+    btn.disabled = false;
+    btn.textContent = "Save transaction";
+  }
 }
 
 /** Options tab of the form: add options received and/or set the value per option. */
