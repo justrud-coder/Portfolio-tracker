@@ -342,3 +342,145 @@ export function planSnapshot(date, values, history, nextRow) {
   }
   return { updates, appended: row - nextRow, lastRow: row - 1 };
 }
+
+// ---------- retirement ----------
+
+/** Retirement tab inputs: key -> label the row starts with. */
+export const RETIREMENT_INPUTS = {
+  currentAge: "Current age",
+  retireAge: "Retirement age",
+  endAge: "Plan until age",
+  spend: "Monthly spend in retirement",
+  pension: "Public pension per month",
+  pensionAge: "Public pension from age",
+  returnPre: "Real return before retirement",
+  returnPost: "Real return in retirement",
+  inflation: "Inflation",
+  counted: "Portfolio counted",
+  monthly: "Monthly investment now",
+};
+
+export const RETIREMENT_DEFAULTS = {
+  currentAge: 43,
+  retireAge: 50,
+  endAge: 85,
+  spend: 3000,
+  pension: 600,
+  pensionAge: 65,
+  returnPre: 0.04,
+  returnPost: 0.03,
+  inflation: 0.025,
+  counted: "Liquid",
+  monthly: 0,
+};
+
+export const COUNTED_OPTIONS = ["Liquid", "Liquid + options", "Total"];
+
+/**
+ * Retirement tab: Setting | Value | Notes. Finds each input by its label, so
+ * rows can move. Returns the values (defaults where missing) and their sheet rows.
+ */
+export function parseRetirement(grid) {
+  const values = { ...RETIREMENT_DEFAULTS };
+  const rows = {};
+  for (let r = 1; r < (grid?.length ?? 0); r++) {
+    const label = norm(grid[r]?.[0]);
+    if (!label) continue;
+    for (const [key, name] of Object.entries(RETIREMENT_INPUTS)) {
+      if (rows[key] || !label.startsWith(norm(name))) continue;
+      rows[key] = r + 1;
+      const v = grid[r]?.[1];
+      if (key === "counted") {
+        const hit = COUNTED_OPTIONS.find((o) => norm(o) === norm(v));
+        if (hit) values.counted = hit;
+      } else if (num(v) !== null) {
+        values[key] = num(v);
+      }
+      break;
+    }
+  }
+  return { values, rows, found: Object.keys(rows).length > 0 };
+}
+
+/** Portfolio value the plan counts: liquid accounts, plus options, or everything. */
+export function countedValue(accounts, mode) {
+  const live = accounts.filter((a) => a.active);
+  const sum = (list) => list.reduce((s, a) => s + a.value, 0);
+  const liquid = sum(live.filter((a) => ["super liquid", "liquid"].includes(norm(a.liquidity))));
+  if (mode === "Total") return sum(live);
+  if (mode === "Liquid + options") return liquid + sum(live.filter((a) => norm(a.assetClass) === "options"));
+  return liquid;
+}
+
+const monthly = (r) => (1 + r) ** (1 / 12) - 1;
+/** Present value of 1 paid at the start of each month for n months. */
+const annuityDue = (i, n) => (n <= 0 ? 0 : i === 0 ? n : ((1 - (1 + i) ** -n) / i) * (1 + i));
+
+/** Spending and pension annuity factors for drawing down from `fromAge`. */
+function drawdown(p, fromAge) {
+  const i = monthly(p.returnPost);
+  const total = Math.max(0, p.endAge - fromAge) * 12;
+  const before = Math.max(0, p.pensionAge - fromAge) * 12;
+  const during = Math.max(0, p.endAge - Math.max(p.pensionAge, fromAge)) * 12;
+  return { spend: annuityDue(i, total), pension: annuityDue(i, during) * (1 + i) ** -before };
+}
+
+/** Portfolio needed at `age` to pay the spend until the plan ends (today's money). */
+export function neededAt(p, age) {
+  const f = drawdown(p, age);
+  return Math.max(0, p.spend * f.spend - p.pension * f.pension);
+}
+
+/** Monthly spend a portfolio of `value` supports from `age` to the end (today's money). */
+export function spendFrom(p, value, age) {
+  const f = drawdown(p, age);
+  return f.spend ? (value + p.pension * f.pension) / f.spend : null;
+}
+
+/** Value after `months` of growth at the pre-retirement return with `perMonth` added at each month end. */
+function grow(p, start, perMonth, months) {
+  const i = monthly(p.returnPre);
+  const g = (1 + i) ** months;
+  return start * g + perMonth * (i === 0 ? months : (g - 1) / i);
+}
+
+/**
+ * The whole plan, in today's money. Matches the formulas on the Retirement tab.
+ * `counted` is the portfolio value the plan starts from.
+ */
+export function retirementPlan(p, counted) {
+  const years = Math.max(0, p.retireAge - p.currentAge);
+  const months = years * 12;
+  const needed = neededAt(p, p.retireAge);
+  const i = monthly(p.returnPre);
+  const g = (1 + i) ** months;
+  const noNewMoney = counted * g;
+  const perMonth = months === 0 ? (needed > counted ? null : 0) : Math.max(0, (needed - noNewMoney) / (i === 0 ? months : (g - 1) / i));
+  const projected = grow(p, counted, p.monthly, months);
+  let status = "Behind";
+  if (perMonth === 0 || (perMonth !== null && p.monthly >= perMonth * 1.1)) status = "Ahead";
+  else if (perMonth !== null && p.monthly >= perMonth * 0.9) status = "On track";
+
+  let earliestAge = null;
+  for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
+    if (grow(p, counted, p.monthly, (age - p.currentAge) * 12) >= neededAt(p, age)) {
+      earliestAge = age;
+      break;
+    }
+  }
+
+  return {
+    years,
+    needed,
+    neededFuture: needed * (1 + p.inflation) ** years,
+    counted,
+    noNewMoney,
+    perMonth,
+    projected,
+    progress: needed ? projected / needed : 1,
+    supportedSpend: spendFrom(p, projected, p.retireAge),
+    todaySpend: spendFrom(p, counted, p.currentAge),
+    earliestAge,
+    status,
+  };
+}
