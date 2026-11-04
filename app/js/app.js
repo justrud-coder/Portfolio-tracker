@@ -506,7 +506,7 @@ function retireSummary(v, plan) {
     readout: `
       <div><div class="label">Earliest age</div><div class="num">${plan.earliestAge === null ? `${esc(v.endAge)}+` : plan.earliestAge}</div></div>
       <div><div class="label">Funded at ${esc(v.retireAge)}</div><div class="num ${plan.progress >= 1 ? "up" : ""}">${pct(plan.progress)}</div></div>
-      <div><div class="label">Need in ${retireYear(plan)}</div><div class="num">${eur(plan.neededFuture)}</div><div class="today num">${eur(plan.needed)} today</div></div>`,
+      <div><div class="label">Need in ${retireYear(plan)}</div><div class="num">${eur(plan.neededFuture)}</div></div>`,
   };
 }
 
@@ -531,7 +531,7 @@ function whatIfCard(saved) {
         return `<label class="slider"><span class="slider-head"><span>${esc(w.label)}</span><span class="num" id="wi-${w.key}"></span></span><input type="range" name="wi-${w.key}" data-key="${w.key}" min="${min}" max="${max}" step="${w.step}" value="${esc(toSlider(w.key, saved[w.key]))}"></label>`;
       }).join("")}
       <p class="small muted" id="whatIfNote">Drag to try a different plan. Nothing is saved unless you tap Save to sheet.</p>
-      <p class="small muted">Retiring later needs less in today's money, but the same target in a later year's euros can still be higher, because prices rise ${pct(saved.inflation)} a year.</p>
+      <p class="small muted">The amount needed is in the euros of the year you retire, so it can rise when you retire later: prices go up ${pct(saved.inflation)} a year.</p>
     </section>`;
 }
 

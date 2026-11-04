@@ -304,7 +304,6 @@ details > summary.row:active { opacity: 0.6; }
 .whatif .readout > div { background: var(--surface-2); border-radius: var(--radius-sm); padding: 10px 12px; }
 .whatif .readout .label { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 .whatif .readout .num { font-weight: 700; font-size: 17px; margin-top: 2px; }
-.whatif .readout .today { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .whatif .slider { display: block; padding: 12px 0 4px; border-top: 1px solid var(--sep); }
 .whatif .readout + .slider { border-top: 0; }
 .whatif .slider-head { display: flex; justify-content: space-between; gap: 12px; font-size: 15px; font-weight: 500; }
