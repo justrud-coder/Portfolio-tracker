@@ -331,3 +331,5 @@ code { background: var(--fill); padding: 1px 5px; border-radius: 5px; font-size:
   .stats { grid-template-columns: repeat(3, 1fr); }
   .stat.wide { grid-column: auto; }
 }
+
+.row.pick .name { font-weight: 600; }

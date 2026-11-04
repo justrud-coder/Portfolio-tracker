@@ -461,13 +461,8 @@ export function retirementPlan(p, counted) {
   if (perMonth === 0 || (perMonth !== null && p.monthly >= perMonth * 1.1)) status = "Ahead";
   else if (perMonth !== null && p.monthly >= perMonth * 0.9) status = "On track";
 
-  let earliestAge = null;
-  for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
-    if (grow(p, counted, p.monthly, (age - p.currentAge) * 12) >= neededAt(p, age)) {
-      earliestAge = age;
-      break;
-    }
-  }
+  const byAge = retirementByAge(p, counted);
+  const earliestAge = byAge.find((r) => r.canRetire)?.age ?? null;
 
   return {
     years,
@@ -481,6 +476,23 @@ export function retirementPlan(p, counted) {
     supportedSpend: spendFrom(p, projected, p.retireAge),
     todaySpend: spendFrom(p, counted, p.currentAge),
     earliestAge,
+    byAge,
     status,
   };
+}
+
+/**
+ * One row per possible retirement age, from now until the plan ends: what the
+ * portfolio would be at that age with the current monthly investment, what is
+ * needed to retire then, and the monthly spend it would pay. Today's money.
+ * Matches the table on the Retirement tab.
+ */
+export function retirementByAge(p, counted) {
+  const out = [];
+  for (let age = Math.ceil(p.currentAge); age < p.endAge; age++) {
+    const portfolio = grow(p, counted, p.monthly, (age - p.currentAge) * 12);
+    const needed = neededAt(p, age);
+    out.push({ age, portfolio, needed, spend: spendFrom(p, portfolio, age), canRetire: portfolio >= needed });
+  }
+  return out;
 }

@@ -461,11 +461,18 @@ function retireSummary(v, plan) {
         <div class="sub muted">from ${eur(plan.counted)} until ${esc(v.endAge)}</div>
       </div>
       <div class="card stat wide">
+        <div class="label">Earliest you can retire</div>
+        <div class="value num">${plan.earliestAge === null ? `Not before ${esc(v.endAge)}` : `Age ${plan.earliestAge}`}</div>
+        <div class="sub muted">on ${eur(v.spend)}/month, investing ${eur(v.monthly)}/month until then</div>
+      </div>
+      <div class="card stat wide">
         <div class="label">At your current pace</div>
         <div class="value num">${eur(plan.supportedSpend)}<span class="small muted">/mo at ${esc(v.retireAge)}</span></div>
         <div class="sub muted">${pace}</div>
       </div>
     </section>
+
+    ${byAgeCard(v, plan)}
 
     <section class="card goal">
       <h2>The numbers</h2>
@@ -476,6 +483,22 @@ function retireSummary(v, plan) {
         <div><dt>At ${esc(v.retireAge)} with no new money</dt><dd class="num">${eur(plan.noNewMoney)}</dd></div>
       </dl>
       <p class="small muted" style="margin:6px 0 0">All amounts are in today's money: raise the monthly investment with inflation each year. Spending runs from ${esc(v.retireAge)} to ${esc(v.endAge)} and uses the portfolio up; the pension covers ${eur(v.pension)} of it from ${esc(v.pensionAge)}. Taxes aren't included.</p>
+    </section>`;
+}
+
+function byAgeCard(v, plan) {
+  const anchor = Math.max(v.retireAge, plan.earliestAge ?? v.retireAge);
+  const rows = plan.byAge.filter((r) => r.age <= anchor + 5);
+  return `
+    <section class="card">
+      <h2>Retire at each age</h2>
+      <ul class="list">${rows
+        .map((r) => {
+          const mark = r.age === plan.earliestAge ? " · earliest" : r.age === v.retireAge ? " · your goal" : "";
+          return `<li><div class="row${r.age === plan.earliestAge ? " pick" : ""}"><div><div class="name">Age ${r.age}<span class="muted">${mark}</span></div><div class="meta num">Have ${eur(r.portfolio)} · need ${eur(r.needed)}</div></div><div class="right"><div class="num ${r.canRetire ? "up" : ""}">${eur(r.spend)}/mo</div><div class="small muted">${r.canRetire ? "Enough" : `${eur(r.needed - r.portfolio)} short`}</div></div></div></li>`;
+        })
+        .join("")}</ul>
+      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Monthly spend each portfolio pays until ${esc(v.endAge)}, in today's money, if you keep investing ${eur(v.monthly)}/month until that age.</p>
     </section>`;
 }
 

@@ -214,3 +214,17 @@ test("credentials accepts the private key however it was pasted", async () => {
   }
   assert.throws(() => credentials(email, "nope"), /BEGIN PRIVATE KEY/);
 });
+
+test("retirementByAge matches the Retirement tab table", () => {
+  const { values } = parseRetirement(RETIREMENT);
+  const v = { ...values, returnPre: 0.0679612, returnPost: 0.0194175, inflation: 0.03, monthly: 3000 };
+  const plan = retirementPlan(v, 240831);
+  const at = (age) => plan.byAge.find((r) => r.age === age);
+  // Values the sheet computed for the same inputs.
+  assert.equal(Math.round(at(43).needed), 959757);
+  assert.equal(Math.round(at(50).portfolio), 700733);
+  assert.equal(Math.round(at(51).spend), 2925);
+  assert.equal(Math.round(at(52).portfolio), 875953);
+  assert.equal(plan.earliestAge, 52);
+  assert.equal(plan.byAge.at(-1).age, 84);
+});
