@@ -1,0 +1,344 @@
+// Pure functions that turn sheet values into the app's data. No DOM, no network,
+// so they run in the browser and under `node --test`.
+
+/** Google Sheets date serial (days since 1899-12-30) -> "YYYY-MM-DD". */
+export function serialToIso(v) {
+  if (typeof v === "string") {
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  }
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return "";
+  const ms = Date.UTC(1899, 11, 30) + Math.round(v * 86400000);
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** Number or null. Accepts numbers and plain numeric strings. */
+export function num(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string") {
+    const s = v.replace(/[€\s,]/g, "");
+    if (s === "" || s === "-") return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+const norm = (s) => String(s ?? "").trim().toLowerCase();
+
+/**
+ * Map wanted keys to column indexes by header text, so the app keeps working
+ * when columns move. A header matches a name if it equals it or starts with
+ * "<name> (" (e.g. "Total (EUR)" matches "total").
+ */
+export function columns(header, spec) {
+  const h = (header ?? []).map(norm);
+  const out = {};
+  for (const [key, names] of Object.entries(spec)) {
+    const list = Array.isArray(names) ? names : [names];
+    out[key] = -1;
+    for (const name of list) {
+      const n = norm(name);
+      const i = h.findIndex((x) => x === n || x.startsWith(n + " ("));
+      if (i >= 0) {
+        out[key] = i;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+const cell = (row, i) => (i >= 0 ? row?.[i] : undefined);
+const text = (row, i) => String(cell(row, i) ?? "").trim();
+
+export function parseAccounts(grid) {
+  const c = columns(grid[0], {
+    name: "Account",
+    assetClass: "Asset class",
+    liquidity: "Liquidity",
+    valuation: "Valuation",
+    active: "Active",
+    notes: "Notes",
+    value: "Current value",
+    lastSnapshot: "Last snapshot",
+    invested: "Invested",
+    gain: "Gain",
+    gainPct: "Gain %",
+  });
+  const out = [];
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const name = text(row, c.name);
+    if (!name) continue;
+    const active = cell(row, c.active);
+    out.push({
+      name,
+      assetClass: text(row, c.assetClass) || "Other",
+      liquidity: text(row, c.liquidity),
+      valuation: norm(cell(row, c.valuation)) === "holdings" ? "holdings" : "manual",
+      active: !(active === false || norm(active) === "false"),
+      notes: text(row, c.notes),
+      value: num(cell(row, c.value)) ?? 0,
+      lastSnapshot: serialToIso(cell(row, c.lastSnapshot)),
+      invested: num(cell(row, c.invested)),
+      gain: num(cell(row, c.gain)),
+      gainPct: num(cell(row, c.gainPct)),
+    });
+  }
+  return out;
+}
+
+export function parseHoldings(grid) {
+  const c = columns(grid[0], {
+    position: "Position",
+    symbol: "Symbol",
+    name: "Name",
+    units: "Units",
+    source: "Price source",
+    price: "Last price",
+    currency: "Currency",
+    priceDate: "Price date",
+    cost: "Cost basis",
+    value: "Market value",
+    gain: "Gain",
+    gainPct: "Gain %",
+  });
+  const out = [];
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const position = text(row, c.position);
+    const symbol = text(row, c.symbol);
+    if (!position || !symbol) continue;
+    out.push({
+      row: r + 1,
+      position,
+      symbol,
+      name: text(row, c.name),
+      units: num(cell(row, c.units)) ?? 0,
+      source: norm(cell(row, c.source)) || "manual",
+      price: num(cell(row, c.price)),
+      currency: text(row, c.currency) || "EUR",
+      priceDate: serialToIso(cell(row, c.priceDate)),
+      cost: num(cell(row, c.cost)),
+      value: num(cell(row, c.value)) ?? 0,
+      gain: num(cell(row, c.gain)),
+      gainPct: num(cell(row, c.gainPct)),
+    });
+  }
+  return out;
+}
+
+/** Monthly tab: one row per snapshot date with the total and per-class columns. */
+export function parseMonthly(grid) {
+  const header = grid[0] ?? [];
+  const c = columns(header, { date: "Date", total: "Total", change: "Change", changePct: "Change %" });
+  const out = [];
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const date = serialToIso(cell(row, c.date));
+    const total = num(cell(row, c.total));
+    if (!date || total === null) continue;
+    const parts = {};
+    header.forEach((h, i) => {
+      if (i === c.date || i === c.total || i === c.change || i === c.changePct) return;
+      const name = String(h ?? "").trim();
+      if (name) parts[name] = num(row?.[i]) ?? 0;
+    });
+    out.push({ date, total, parts });
+  }
+  out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return out;
+}
+
+export function parseGoals(grid) {
+  const c = columns(grid[0], {
+    goal: "Goal",
+    measure: "Measure",
+    target: "Target",
+    targetDate: "Target date",
+    current: "Current",
+    progress: "Progress %",
+    remaining: "Remaining",
+    monthsLeft: "Months left",
+    perMonth: "Needed per month",
+  });
+  const out = [];
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const goal = text(row, c.goal);
+    if (!goal) continue;
+    const target = num(cell(row, c.target));
+    const current = num(cell(row, c.current));
+    out.push({
+      goal,
+      measure: text(row, c.measure),
+      target,
+      targetDate: serialToIso(cell(row, c.targetDate)),
+      current,
+      progress: num(cell(row, c.progress)) ?? (target ? (current ?? 0) / target : null),
+      remaining: num(cell(row, c.remaining)),
+      monthsLeft: num(cell(row, c.monthsLeft)),
+      perMonth: num(cell(row, c.perMonth)),
+    });
+  }
+  return out;
+}
+
+/** Lists tab: each header becomes a key holding the non-empty values below it. */
+export function parseLists(grid) {
+  const header = grid[0] ?? [];
+  const out = {};
+  header.forEach((h, i) => {
+    const key = String(h ?? "").trim();
+    if (!key) return;
+    out[key] = grid
+      .slice(1)
+      .map((row) => String(row?.[i] ?? "").trim())
+      .filter(Boolean);
+  });
+  return out;
+}
+
+/** History tab rows: date, account, value, with their 1-based sheet row. */
+export function parseHistory(grid) {
+  const c = columns(grid[0], { date: "Date", account: "Account", value: "Value", note: "Note" });
+  const out = [];
+  for (let r = 1; r < grid.length; r++) {
+    const row = grid[r];
+    const account = text(row, c.account);
+    const date = serialToIso(cell(row, c.date));
+    if (!account && !date) continue;
+    out.push({ row: r + 1, date, account, value: num(cell(row, c.value)), note: text(row, c.note) });
+  }
+  return out;
+}
+
+/** 1-based row after the last row that has anything in it (header counts). */
+export function nextFreeRow(grid) {
+  let last = 0;
+  grid.forEach((row, i) => {
+    if ((row ?? []).some((v) => v !== "" && v !== null && v !== undefined)) last = i + 1;
+  });
+  return Math.max(last, 1) + 1;
+}
+
+const rank = (order, name) => {
+  const i = order.indexOf(name);
+  return i < 0 ? order.length : i;
+};
+
+/** Headline numbers for the dashboard. */
+export function summarize(accounts, monthly) {
+  const live = accounts.filter((a) => a.active);
+  const total = live.reduce((s, a) => s + a.value, 0);
+
+  const byClass = new Map();
+  for (const a of live) byClass.set(a.assetClass, (byClass.get(a.assetClass) ?? 0) + a.value);
+  const allocation = [...byClass.entries()]
+    .map(([name, value]) => ({ name, value, share: total ? value / total : 0 }))
+    .filter((x) => x.value !== 0)
+    .sort((a, b) => b.value - a.value);
+
+  const byLiquidity = new Map();
+  for (const a of live) {
+    const k = a.liquidity || "Other";
+    byLiquidity.set(k, (byLiquidity.get(k) ?? 0) + a.value);
+  }
+  const order = ["Super liquid", "Liquid", "Locked"];
+  const liquidity = [...byLiquidity.entries()]
+    .map(([name, value]) => ({ name, value, share: total ? value / total : 0 }))
+    .sort((a, b) => rank(order, a.name) - rank(order, b.name));
+
+  const withCost = live.filter((a) => a.invested !== null && a.invested !== 0);
+  const invested = withCost.reduce((s, a) => s + a.invested, 0);
+  const costValue = withCost.reduce((s, a) => s + a.value, 0);
+  const gain = withCost.length ? costValue - invested : null;
+
+  const last = monthly[monthly.length - 1] ?? null;
+  const prev = monthly[monthly.length - 2] ?? null;
+  const sinceSnapshot = last ? total - last.total : null;
+  const lastMonth = last && prev ? last.total - prev.total : null;
+
+  return {
+    total,
+    allocation,
+    liquidity,
+    invested: withCost.length ? invested : null,
+    gain,
+    gainPct: gain !== null && invested ? gain / invested : null,
+    gainAccounts: withCost.map((a) => a.name),
+    lastSnapshot: last,
+    sinceSnapshot,
+    sinceSnapshotPct: last && last.total ? sinceSnapshot / last.total : null,
+    lastMonth,
+    lastMonthPct: lastMonth !== null && prev.total ? lastMonth / prev.total : null,
+    prevSnapshot: prev,
+  };
+}
+
+export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL", "DIVIDEND", "FEE"];
+
+/**
+ * Validate a transaction form and return the A:I row for the Transactions tab:
+ * Date, Account, Type, Symbol, Units, Price (EUR), Fees (EUR), Cash amount (EUR), Note.
+ */
+export function transactionRow(t) {
+  const errors = [];
+  const type = String(t.type ?? "").toUpperCase();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
+  if (!t.account) errors.push("Pick an account.");
+  if (!TX_TYPES.includes(type)) errors.push("Pick a type.");
+  const trade = type === "BUY" || type === "SELL";
+  const units = num(t.units);
+  const price = num(t.price);
+  const fees = num(t.fees);
+  const cash = num(t.cash);
+  if (trade) {
+    if (!t.symbol) errors.push("Enter the symbol.");
+    if (!(units > 0)) errors.push("Units must be more than 0.");
+    if (!(price > 0)) errors.push("Price must be more than 0.");
+  } else if (!(cash > 0)) {
+    errors.push("Amount must be more than 0.");
+  }
+  if (fees !== null && fees < 0) errors.push("Fees can't be negative.");
+  if (errors.length) return { errors };
+  return {
+    errors,
+    row: [
+      t.date,
+      t.account,
+      type,
+      trade || type === "DIVIDEND" ? (t.symbol ?? "").trim() : "",
+      trade ? units : "",
+      trade ? price : "",
+      fees ?? "",
+      trade ? "" : cash,
+      (t.note ?? "").trim(),
+    ],
+  };
+}
+
+/** Value a transaction adds, as the sheet's Value column computes it. */
+export function transactionValue(row) {
+  const [, , type, , units, price, fees, cash] = row;
+  const f = num(fees) ?? 0;
+  if (type === "BUY") return num(units) * num(price) + f;
+  if (type === "SELL") return num(units) * num(price) - f;
+  return num(cash) ?? 0;
+}
+
+/**
+ * Plan the History writes for a snapshot: rows already present for the same
+ * date and account are overwritten, the rest are appended from `nextRow`.
+ */
+export function planSnapshot(date, values, history, nextRow) {
+  const updates = [];
+  let row = nextRow;
+  for (const { account, value, note } of values) {
+    const existing = history.find((h) => h.date === date && h.account === account);
+    const target = existing ? existing.row : row++;
+    updates.push({ row: target, values: [date, account, value, note ?? (existing?.note || "")], replaced: !!existing });
+  }
+  return { updates, appended: row - nextRow, lastRow: row - 1 };
+}

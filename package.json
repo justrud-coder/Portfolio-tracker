@@ -1,0 +1,13 @@
+{
+  "name": "portfolio-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phone app (PWA) for a Google Sheets portfolio, plus a daily price updater",
+  "scripts": {
+    "test": "node --test",
+    "serve": "npx --yes http-server@14.1.1 app -p 8080 -c-1",
+    "update-prices": "node scripts/update-prices.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
