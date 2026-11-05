@@ -1120,42 +1120,26 @@ export function savingsByMonth(transactions, income, today, count = 12) {
 
 // ---------- plan vs actual ----------
 
-/** Portfolio value a Monthly row holds for the plan's "Portfolio counted" setting. */
-export function countedSnapshot(m, mode) {
-  const liquid = m.parts?.["Liquid (all)"];
-  if (mode === "Total" || liquid === undefined) return m.total;
-  if (mode === "Liquid + options") return liquid + (m.parts?.Options ?? 0);
-  return liquid;
+/**
+ * The counted portfolio over time, from the History tab: [{date, total}],
+ * oldest first. Uses `historySeries`, so a date with only a value or two
+ * saved from the app keeps the other accounts at their last full snapshot.
+ * "Liquid" counts super liquid and liquid accounts, "Liquid + options" adds
+ * the options, "Total" counts everything.
+ */
+export function countedHistory(history, accounts, mode) {
+  const byName = new Map(accounts.map((a) => [a.name, a]));
+  const counts = (name) => {
+    if (mode === "Total") return true;
+    const a = byName.get(name);
+    if (!a) return false;
+    if (["super liquid", "liquid"].includes(norm(a.liquidity))) return true;
+    return mode === "Liquid + options" && norm(a.assetClass) === "options";
+  };
+  return historySeries(history.filter((h) => counts(h.account)), accounts).map(({ date, total }) => ({ date, total }));
 }
 
 const MONTH_DAYS = 365.25 / 12;
-
-/**
- * New money put in between `from` (exclusive) and `to` (inclusive): deposits
- * minus withdrawals on any account, plus III pillar contributions (fund units
- * bought or sold there), as `savedBy` counts them.
- */
-export function netInvested(transactions, from, to) {
-  let sum = 0;
-  for (const t of transactions) {
-    const cells = t.cells ?? t;
-    const iso = serialToIso(cells[0]);
-    const v = savedBy(cells);
-    if (v !== null && iso > from && iso <= to) sum += v;
-  }
-  return sum;
-}
-
-/** First day new money was recorded (a dated deposit, withdrawal or III pillar contribution). */
-export function investTrackingStart(transactions) {
-  let first = null;
-  for (const t of transactions) {
-    const cells = t.cells ?? t;
-    const iso = serialToIso(cells[0]);
-    if (savedBy(cells) !== null && (!first || iso < first)) first = iso;
-  }
-  return first;
-}
 
 /**
  * Growth the plan expects from a start value over `months`: the start value
@@ -1169,100 +1153,81 @@ export function planGrowth(p, start, months) {
   return { total: returns + invested, invested, returns };
 }
 
-/** Last point of each calendar period (`len` 7 = month, 4 = year), oldest first. */
-function periodEnds(points, len) {
+/** Last point of each calendar month, oldest first. */
+function monthEnds(points) {
   const out = [];
   for (const pt of points) {
     const last = out[out.length - 1];
-    if (last && last.date.slice(0, len) === pt.date.slice(0, len)) out[out.length - 1] = pt;
+    if (last && last.date.slice(0, 7) === pt.date.slice(0, 7)) out[out.length - 1] = pt;
     else out.push(pt);
   }
   return out;
 }
 
+/** The point closest to `target` (ties go to the earlier one). */
+function nearest(points, target) {
+  let best = null;
+  const gap = (d) => Math.abs(dayNumber(d) - dayNumber(target));
+  for (const pt of points) if (!best || gap(pt.date) < gap(best.date)) best = pt;
+  return best;
+}
+
 /**
- * Plan vs actual growth of the counted portfolio, from the Monthly snapshots
- * (plus today's live value when it's newer than the last snapshot).
+ * Plan vs actual growth of the counted portfolio. `series` is
+ * [{date, total}] oldest first (see `countedHistory`); today's live value is
+ * added when it's newer than the last point.
  *
- * - `perMonth` / `perYear`: what the plan expects from today's value over the
- *   next month and year, split into the return and the money invested.
- * - `months` / `years`: one row per calendar month and year, newest first,
- *   from the previous period's last snapshot to this period's last snapshot.
- *   `plan` scales with the days in between, so gaps in the history compare
- *   fairly. `invested` is null before new money was recorded on the
- *   Transactions tab, and `partial` marks the period recording started in.
- * - `last12`: change since the snapshot closest to a year ago, against the plan
- *   for the same stretch.
+ * - `months`: one row per calendar month, newest first, from the last point
+ *   of the month before to the month's last point.
+ * - `years`: one row per year, newest first, year to date: from the point
+ *   closest to 31 December of the year before (like the Overview's This year)
+ *   to the point closest to 31 December, or the latest point this year.
+ * - `last12`: change since the point closest to a year ago.
+ * Each row's `plan` is `planGrowth` over the days in between.
  * Matches the Plan vs actual tab of the sheet.
  */
-export function planVsActual(p, monthly, transactions = [], { live = null, today = null } = {}) {
-  const points = monthly.map((m) => ({ date: m.date, value: countedSnapshot(m, p.counted) }));
+export function planVsActual(p, series, { live = null, today = null } = {}) {
+  const points = series.map((m) => ({ date: m.date, value: m.total }));
   if (live !== null && today && (!points.length || today > points[points.length - 1].date)) points.push({ date: today, value: live });
   const now = points[points.length - 1] ?? null;
-  const value = now?.value ?? live ?? 0;
-  const tracking = investTrackingStart(transactions);
-  const rows = (len) => {
-    const ends = periodEnds(points, len);
-    const out = [];
-    for (let k = ends.length - 1; k >= 1; k--) {
-      const a = ends[k - 1];
-      const b = ends[k];
-      const months = (dayNumber(b.date) - dayNumber(a.date)) / MONTH_DAYS;
-      const plan = planGrowth(p, a.value, months);
-      const counted = tracking !== null && b.date >= tracking;
-      out.push({
-        period: b.date.slice(0, len),
-        from: a.date,
-        to: b.date,
-        start: a.value,
-        end: b.value,
-        months,
-        actual: b.value - a.value,
-        plan: plan.total,
-        planInvested: plan.invested,
-        diff: b.value - a.value - plan.total,
-        invested: counted ? netInvested(transactions, a.date, b.date) : null,
-        partial: counted && a.date < tracking,
-      });
-    }
-    return out;
+  const row = (period, a, b) => {
+    const months = (dayNumber(b.date) - dayNumber(a.date)) / MONTH_DAYS;
+    const plan = planGrowth(p, a.value, months);
+    const actual = b.value - a.value;
+    return { period, from: a.date, to: b.date, start: a.value, end: b.value, months, actual, plan: plan.total, planInvested: plan.invested, diff: actual - plan.total };
   };
 
-  let last12 = null;
+  const ends = monthEnds(points);
+  const months = [];
+  for (let k = ends.length - 1; k >= 1; k--) months.push(row(ends[k].date.slice(0, 7), ends[k - 1], ends[k]));
+
+  const years = [];
   if (now) {
-    const yearAgo = addMonths(now.date, -12);
-    const cutoff = addMonths(now.date, -6);
-    const gap = (d) => Math.abs(dayNumber(d) - dayNumber(yearAgo));
-    let base = null;
-    for (const pt of points) if (pt.date <= cutoff && (!base || gap(pt.date) < gap(base.date))) base = pt;
-    if (base) {
-      const months = (dayNumber(now.date) - dayNumber(base.date)) / MONTH_DAYS;
-      const plan = planGrowth(p, base.value, months);
-      const counted = tracking !== null;
-      last12 = {
-        from: base.date,
-        to: now.date,
-        months,
-        actual: now.value - base.value,
-        plan: plan.total,
-        planInvested: plan.invested,
-        diff: now.value - base.value - plan.total,
-        invested: counted ? netInvested(transactions, base.date, now.date) : null,
-        partial: counted && base.date < tracking,
-      };
+    const first = Number(points[0].date.slice(0, 4));
+    for (let y = Number(now.date.slice(0, 4)); y >= first; y--) {
+      const a = nearest(points, `${y - 1}-12-31`);
+      const b = y === Number(now.date.slice(0, 4)) ? now : nearest(points, `${y}-12-31`);
+      if (a && b && a.date < b.date) years.push(row(String(y), a, b));
     }
   }
 
+  let last12 = null;
+  if (now) {
+    const cutoff = addMonths(now.date, -6);
+    const base = nearest(points.filter((pt) => pt.date <= cutoff), addMonths(now.date, -12));
+    if (base) last12 = row("last12", base, now);
+  }
+
+  const value = now?.value ?? 0;
   return {
     value,
     asOf: now?.date ?? null,
     rate: (1 + p.returnPre) * (1 + p.inflation) - 1,
     perMonth: planGrowth(p, value, 1),
     perYear: planGrowth(p, value, 12),
-    months: rows(7),
-    years: rows(4),
+    months,
+    years,
     last12,
-    tracking,
   };
 }
 
