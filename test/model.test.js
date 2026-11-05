@@ -520,3 +520,16 @@ test("real estate increase and decrease", async () => {
   assert.equal(m.changedValue(100000, 2500.555, true), 102500.56);
   assert.equal(m.changedValue(100000, 2500, false), 97500);
 });
+
+test("editKind and unitsToTarget pick how an Overview row is edited", async () => {
+  const { editKind, unitsToTarget } = await import("../app/js/model.js");
+  assert.equal(editKind({ kind: "account", account: "Deposit" }), "value");
+  assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "CASH", source: "manual", units: 0 } }), "cash");
+  assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "VWCE.DE", source: "yahoo", price: 100, units: 3 } }), "units");
+  assert.equal(editKind({ kind: "holding", account: "III pillar", holding: { symbol: "AA16", source: "manual", price: 1, units: 5 } }), "total");
+  assert.equal(editKind({ kind: "holding", account: "III pillar", holding: { symbol: "X", source: "manual", units: 0 } }), null);
+  assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "EXSG.DE", source: "yahoo", price: null, units: 200 } }), "units");
+  assert.deepEqual(unitsToTarget(179, 181), { type: "BUY", units: 2 });
+  assert.deepEqual(unitsToTarget(80, 79.5), { type: "SELL", units: 0.5 });
+  assert.equal(unitsToTarget(5, 5), null);
+});

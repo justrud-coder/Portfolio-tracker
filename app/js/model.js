@@ -1307,6 +1307,31 @@ export function unitPriceForTotal(total, units) {
   return total / u;
 }
 
+/**
+ * How an Overview row is edited in place:
+ * - "value": a manual account; the new value is saved as today's History snapshot.
+ * - "cash": IBKR cash; a deposit or withdrawal reaches the new balance.
+ * - "units": an IBKR stock; a buy or sell at its latest price reaches the new units.
+ * - "total": a fund or options priced by hand; the price per unit becomes total / units.
+ * Null when the row can't be edited.
+ */
+export function editKind(item) {
+  if (item.kind === "account") return "value";
+  const h = item.holding;
+  if (!h) return null;
+  if (item.account === BROKER && h.symbol === BROKER_CASH) return "cash";
+  if (item.account === BROKER) return "units";
+  if (h.units > 0) return "total";
+  return null;
+}
+
+/** Buy or sell that takes a holding from `current` to `target` units. Null when nothing changes. */
+export function unitsToTarget(current, target) {
+  const diff = Math.round(((target ?? 0) - (current ?? 0)) * 1e6) / 1e6;
+  if (!diff) return null;
+  return diff > 0 ? { type: "BUY", units: diff } : { type: "SELL", units: -diff };
+}
+
 /** A property's value after an increase or decrease of `amount`, rounded to cents. */
 export function changedValue(current, amount, up) {
   return Math.round(((current ?? 0) + (up ? amount : -amount)) * 100) / 100;
