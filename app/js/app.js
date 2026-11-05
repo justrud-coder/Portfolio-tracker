@@ -42,6 +42,7 @@ import {
   targetsGrid,
   INCOME_HEADER,
   incomeSources,
+  markInterest,
   incomeRow,
   parseIncome,
   savingsByMonth,
@@ -1034,8 +1035,9 @@ function renderSavings(root) {
   const lastSource = ls.get(SOURCE_KEY);
   const incomeCard = `
     <section class="card" id="incomeCard">
-      <h2>Add income</h2>
+      <h2 id="incomeTitle">Add income</h2>
       <form id="incomeForm" novalidate>
+        <input type="hidden" name="editRow" value="">
         <label class="field">Date<input type="date" name="date" value="${today}" required></label>
         <label class="field">Source
           <select name="source">${sources.map((x) => `<option ${x === (lastSource ?? "Salary") ? "selected" : ""}>${esc(x)}</option>`).join("")}<option value="${NEW_SOURCE}">New source…</option></select>
@@ -1046,13 +1048,17 @@ function renderSavings(root) {
         <div class="preview" id="incomePreview"></div>
         <ul class="errors" id="incomeErrors"></ul>
         <button class="btn" id="incomeSave">Save income</button>
+        <button type="button" class="btn secondary" id="incomeCancel" style="margin-top:10px" hidden>Cancel editing</button>
       </form>
     </section>`;
-  const recentIncome = [...d.income].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 6);
+  const recentIncome = [...d.income].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.row < b.row ? 1 : -1)).slice(0, 12);
   const incomeList = recentIncome.length
     ? `<section class="card"><h2>Recent income</h2><ul class="list">${recentIncome
-        .map((i) => `<li><div class="row"><div><div class="name">${esc(i.source || "Income")}</div><div class="meta">${shortDate(i.date)}${i.note ? ` · ${esc(i.note)}` : ""}</div></div><div class="right num">${eurCents(i.amount)}</div></div></li>`)
-        .join("")}</ul><p class="small muted" style="margin:0;padding:10px 0 14px">Edit or remove entries on the Income tab of the sheet.</p></section>`
+        .map(
+          (i) =>
+            `<li><div class="row"><div><div class="name">${esc(i.source || "Income")}</div><div class="meta">${shortDate(i.date)}${i.note ? ` · ${esc(i.note)}` : ""}</div></div><div class="right num">${eurCents(i.amount)}</div><button class="rep-btn" data-income-edit="${i.row}" aria-label="Edit this income" title="Edit">${EDIT_SVG}</button><button class="del-btn" data-income-del="${i.row}" aria-label="Remove this income" title="Remove">${REMOVE_SVG}</button></div></li>`,
+        )
+        .join("")}</ul></section>`
     : "";
 
   if (!d.income.length) {
@@ -1106,6 +1112,7 @@ function renderSavings(root) {
     ${incomeList}`;
 
   wireIncomeForm();
+  wireIncomeList(root);
   const pick = (i) => {
     const m = s.months[i];
     $("#ratePick").innerHTML = `${monthName(m.month)}: <span class="num">${pct(m.rate)}</span>, saved <span class="num">${eur(m.saved)}</span> of <span class="num">${eur(m.income)}</span>`;
@@ -1113,6 +1120,60 @@ function renderSavings(root) {
   };
   root.querySelectorAll("#rateChart .hit").forEach((h) => h.addEventListener("pointerdown", () => pick(Number(h.dataset.i))));
   root.querySelectorAll("#rateChart .hit").forEach((h) => h.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && pick(Number(h.dataset.i))));
+}
+
+const EDIT_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4" /></svg>`;
+
+/** Edit fills the form above with the entry; remove deletes its Income row after a check. */
+function wireIncomeList(root) {
+  const find = (row) => state.data.income.find((x) => x.row === Number(row));
+  for (const b of root.querySelectorAll("[data-income-edit]")) {
+    b.onclick = () => {
+      const i = find(b.dataset.incomeEdit);
+      if (!i) return;
+      const form = $("#incomeForm");
+      const select = form.elements.source;
+      if (![...select.options].some((o) => o.value === i.source)) select.add(new Option(i.source, i.source), select.options.length - 1);
+      select.value = i.source;
+      form.elements.date.value = i.date;
+      form.elements.amount.value = i.amount;
+      form.elements.note.value = i.note;
+      form.elements.editRow.value = i.row;
+      $("#incomeTitle").textContent = "Edit income";
+      $("#incomeSave").textContent = "Save changes";
+      $("#incomeCancel").hidden = false;
+      form.dispatchEvent(new Event("change"));
+      $("#incomeCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  }
+  for (const b of root.querySelectorAll("[data-income-del]")) {
+    b.onclick = async () => {
+      const i = find(b.dataset.incomeDel);
+      if (!i) return;
+      if (!confirm(`Remove ${i.source} of ${eurCents(i.amount)} on ${shortDate(i.date)}? This deletes row ${i.row} of the Income tab.`)) return;
+      b.disabled = true;
+      try {
+        await checkIncomeRow(i);
+        const meta = await freshMeta();
+        await sheets.deleteRow(meta.tabs.Income, i.row);
+        showBanner(`Removed ${esc(i.source.toLowerCase())} of ${eurCents(i.amount)}.`, "ok");
+        await load({ quiet: true });
+      } catch (err) {
+        if (err instanceof AuthError) needSignIn();
+        else showBanner(esc(err.message || String(err)), "error");
+        b.disabled = false;
+      }
+    };
+  }
+}
+
+/** Refuse to change an Income row that moved or changed since the app loaded it. */
+async function checkIncomeRow(i) {
+  const [grid] = await sheets.batchGet([INCOME_RANGE]);
+  const now = parseIncome(grid).find((x) => x.row === i.row);
+  if (!now || now.date !== i.date || now.source !== i.source || now.amount !== i.amount || now.note !== i.note) {
+    throw new Error("The Income tab changed since the app loaded it. Refresh and try again.");
+  }
 }
 
 const SOURCE_KEY = "pt.incomeSource";
@@ -1125,7 +1186,7 @@ function wireIncomeForm() {
     const f = new FormData(form);
     form.querySelector('[data-for="newsource"]').hidden = f.get("source") !== NEW_SOURCE;
     const month = String(f.get("date") ?? "").slice(0, 7);
-    const had = state.data.income.filter((x) => x.date.slice(0, 7) === month && x.source.toLowerCase() !== "rent").reduce((sum, x) => sum + x.amount, 0);
+    const had = state.data.income.filter((x) => x.date.slice(0, 7) === month && x.source.toLowerCase() !== "rent" && x.row !== Number(f.get("editRow"))).reduce((sum, x) => sum + x.amount, 0);
     const amount = num(String(f.get("amount") ?? "").replace(",", "."));
     $("#incomePreview").textContent = /^\d{4}-\d{2}$/.test(month)
       ? `Counts toward ${monthName(month)}${had ? `, which has ${eurCents(had)} already` : ""}${amount ? `: ${eurCents(had + amount)} in total` : ""}.`
@@ -1139,6 +1200,7 @@ function wireIncomeForm() {
     const f = Object.fromEntries(new FormData(form));
     saveIncome({ ...f, source: f.source === NEW_SOURCE ? f.newSource : f.source });
   };
+  $("#incomeCancel").onclick = () => render();
 }
 
 /** Save an income row to the Income tab, making the tab first if the sheet has none. */
@@ -1147,9 +1209,19 @@ async function saveIncome(f) {
   $("#incomeErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
   if (!row) return;
   const btn = $("#incomeSave");
+  const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
+    const editing = state.data.income.find((x) => x.row === Number(f.editRow));
+    if (editing) {
+      await checkIncomeRow(editing);
+      await sheets.write([{ range: `Income!A${editing.row}:D${editing.row}`, values: [row] }]);
+      ls.set(SOURCE_KEY, row[1]);
+      showBanner(`Updated ${esc(row[1].toLowerCase())}: ${eurCents(row[2])} on ${shortDate(row[0])}.`, "ok");
+      await load({ quiet: true });
+      return;
+    }
     const meta = await freshMeta();
     let tab = meta.tabs.Income;
     let n;
@@ -1171,7 +1243,7 @@ async function saveIncome(f) {
     if (err instanceof AuthError) needSignIn();
     else showBanner(esc(err.message || String(err)), "error");
     btn.disabled = false;
-    btn.textContent = "Save income";
+    btn.textContent = label;
   }
 }
 
@@ -1239,6 +1311,7 @@ function renderAdd(root) {
             </div>
           </div>
           <label class="field"><span id="cashLabel">Amount (€)</span><input name="cash" inputmode="decimal" autocomplete="off"></label>
+          <label class="field" data-for="interest">Interest, not new savings<input type="checkbox" name="interest" value="1" class="check"></label>
         </div>
         <div class="two" data-for="fund">
           <label class="field">Fund
@@ -1346,6 +1419,7 @@ function renderAdd(root) {
     show("trade", trade);
     show("cash", cls === "cash");
     show("cashmode", mode === "DEPOSIT");
+    show("interest", mode === "DEPOSIT");
     show("fund", mode === "PENSION_VALUE");
     show("newfund", mode === "PENSION_NEW");
     show("total", mode === "PENSION_VALUE" || mode === "OPTIONS_VALUE");
@@ -1402,6 +1476,8 @@ function renderAdd(root) {
     e.preventDefault();
     const { cls, mode } = current();
     const f = Object.fromEntries(new FormData(form));
+    // Interest grows the balance but isn't money saved: the note marks it for the savings rate.
+    if (mode === "DEPOSIT" && f.interest) f.note = markInterest(f.note);
     if (mode === "OPTIONS_VALUE") return savePositionTotal(f, OPTIONS, options, "OPTIONS_VALUE");
     if (mode === "PENSION_VALUE") return savePositionTotal(f, PENSION, funds.find((h) => h.symbol === f.fund), "PENSION_VALUE");
     if (cls === "estate") return saveRealEstate(f, mode === "ESTATE_UP");
