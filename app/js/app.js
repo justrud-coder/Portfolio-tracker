@@ -14,6 +14,7 @@ import {
   parseRetirement,
   sameTransaction,
   retirementPlan,
+  planVsActual,
   changedInputs,
   parseAccounts,
   parseHistory,
@@ -604,6 +605,64 @@ function drawAgeChart(v, plan) {
   ageChart(host, rows, { goal: v.retireAge, earliest: plan.earliestAge });
 }
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const periodName = (k) => (k.length === 4 ? k : `${MONTH_NAMES[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`);
+const shortDay = (iso) => shortDate(iso).replace(/ \d{4}$/, "");
+
+/** "+€1,200 vs plan" / "€800 behind plan", coloured. */
+function vsPlan(diff) {
+  if (diff === null || !Number.isFinite(diff)) return "";
+  const word = Math.abs(diff) < 0.5 ? "on plan" : diff > 0 ? "ahead of plan" : "behind plan";
+  return `<span class="${tone(diff)} num">${eur(Math.abs(diff))}</span> <span class="muted">${word}</span>`;
+}
+
+function investedLine(r, tracking) {
+  if (r.invested === null) return "";
+  return `<div class="meta">Invested <span class="num">${eur(r.invested)}</span> of <span class="num">${eur(r.planInvested)}</span> planned${r.partial ? ` (recorded from ${shortDate(tracking)})` : ""}</div>`;
+}
+
+/** Plan vs actual: how much the counted portfolio should grow under the plan, and how much it did. */
+function planVsActualCard(v) {
+  const d = state.data;
+  const r = planVsActual(v, d.monthly, d.transactions, { live: countedValue(d.accounts, v.counted), today: todayIso() });
+  const last = r.months[0] ?? null;
+  const tile = (label, planned, actual, foot) => `
+      <div class="card stat">
+        <div class="label">${label}</div>
+        <div class="value num">${signedEur(planned.total)}</div>
+        <div class="sub muted">plan: <span class="num">${eur(planned.returns)}</span> return + <span class="num">${eur(planned.invested)}</span> invested</div>
+        ${actual ? `<div class="sub">Actual <span class="num ${tone(actual.actual)}">${signedEur(actual.actual)}</span> · ${vsPlan(actual.diff)}</div><div class="sub muted">${foot}</div>` : ""}
+      </div>`;
+  const row = (x) => `
+        <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div>${investedLine(x, r.tracking)}</div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
+  const tracked = r.tracking
+    ? `New money (deposits minus withdrawals, plus III pillar contributions, without Rent cash) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
+    : "Record deposits and withdrawals on the Transaction tab to compare what you invest with the plan.";
+  return `
+    <section class="card">
+      <h2>Plan vs actual</h2>
+      <p class="small muted" style="margin:0 0 14px">The plan grows ${esc(v.counted.toLowerCase())} (${eur(r.value)}) by <span class="num">${pct(r.rate)}</span> a year (${pct(v.returnPre)} real return plus ${pct(v.inflation)} inflation) and adds ${eur(v.monthly)} a month.</p>
+      <section class="stats" style="margin-bottom:0">
+        ${tile("Per month", r.perMonth, last, last ? `${shortDay(last.from)} – ${shortDate(last.to)}` : "")}
+        ${tile("Per year", r.perYear, r.last12, r.last12 ? `last 12 months, ${shortDate(r.last12.from)} – ${shortDate(r.last12.to)}` : "")}
+        <div class="card stat wide">
+          <div class="label">Monthly investment</div>
+          <div class="value num">${eur(v.monthly)}<span class="small muted">/mo plan</span></div>
+          <div class="sub">${last && last.invested !== null ? `Actual ${eur(last.invested)} in ${esc(periodName(last.period))}${last.partial ? " (recording started mid-month)" : ""}${r.last12 && r.last12.invested !== null ? ` · ${eur(r.last12.invested)} over the last 12 months of ${eur(r.last12.planInvested)}` : ""}` : `<span class="muted">No deposits recorded yet</span>`}</div>
+        </div>
+      </section>
+    </section>
+    ${r.months.length ? `<section class="card">
+      <h2>By month</h2>
+      <ul class="list">${r.months.slice(0, 12).map(row).join("")}</ul>
+    </section>` : ""}
+    ${r.years.length ? `<section class="card">
+      <h2>By year</h2>
+      <ul class="list">${r.years.map(row).join("")}</ul>
+      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Each period runs from the last snapshot of the one before to its own last snapshot, so older months, which were snapshotted around the 5th, cover mostly the month before. The plan scales with the days in between. ${tracked}</p>
+    </section>` : ""}`;
+}
+
 function renderRetire(root) {
   const d = state.data;
   const r = d.retirement;
@@ -616,6 +675,7 @@ function renderRetire(root) {
     <div id="retireHero"></div>
     ${whatIfCard(r.values)}
     <div id="retireSummary"></div>
+    <div id="planVsActual"></div>
     <section class="card">
       <h2>Your plan</h2>
       <form id="retire" novalidate>
@@ -659,6 +719,7 @@ function renderRetire(root) {
       $("#retireSummary").innerHTML = out.details;
       drawAgeChart(v, plan);
       $("#whatIfReadout").innerHTML = out.readout;
+      $("#planVsActual").innerHTML = planVsActualCard(v);
       for (const s of sliders) {
         const k = s.dataset.key;
         const x = RETIRE_FIELDS.find((f) => f.key === k).kind === "pct" ? v[k] * 100 : v[k];
