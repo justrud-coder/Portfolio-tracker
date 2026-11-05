@@ -46,6 +46,7 @@ import {
   changedValue,
   editKind,
   unitsToTarget,
+  monthlyDetails,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { ageChart, lineChart } from "./chart.js";
@@ -69,6 +70,7 @@ const VIEW_KEY = "pt.view";
 const RANGE_KEY = "pt.range";
 const SPLIT_KEY = "pt.chartSplit";
 const CLIENT_KEY = "pt.clientId";
+const DETAIL_GROUP_KEY = "pt.detailGroup";
 
 const $ = (s, root = document) => root.querySelector(s);
 const ls = {
@@ -99,6 +101,9 @@ const state = {
   range: ls.get(RANGE_KEY) || "all",
   split: ls.get(SPLIT_KEY) === "1",
   busy: false,
+  detailMonth: null, // "YYYY-MM" picked on the Details tab, null for the latest
+  detailGroup: ls.get(DETAIL_GROUP_KEY) || "Total",
+  detailAll: false,
 };
 
 const clientId = () => CONFIG.clientId || ls.get(CLIENT_KEY) || "";
@@ -271,7 +276,7 @@ function render() {
     if (b.dataset.view === state.view) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  const views = { home: renderHome, retire: renderRetire, rebalance: renderRebalance, add: renderAdd };
+  const views = { home: renderHome, details: renderDetails, retire: renderRetire, rebalance: renderRebalance, add: renderAdd };
   const view = views[state.view] ? state.view : "home";
   const root = $("#view");
   views[view](root);
@@ -281,7 +286,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", add: "Add/remove asset" };
+const TITLES = { home: "Portfolio", details: "Details", retire: "Goals", rebalance: "Rebalance", add: "Add/remove asset" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -508,6 +513,113 @@ function groupItems(items, all = items) {
         </form></details></li>`;
     })
     .join("");
+}
+
+// ---------- details: month over month ----------
+
+const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const monthTitle = (k) => `${MONTH_FULL[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`;
+const DETAIL_COLORS = { "III pillar": "#f5b400", "II pillar": "#d99a00", Crypto: "#3fa9f5", Other: "#717171" };
+const detailColor = (g) => DETAIL_COLORS[g] ?? GROUP_COLORS[g] ?? "#717171";
+
+/** "€1,234 → €1,300" */
+const span = (x) => `<span class="num">${eur(x.start)}</span> → <span class="num">${eur(x.end)}</span>`;
+const changeRight = (x) =>
+  `<div class="right"><div class="num ${tone(x.change)}">${signedEur(x.change)}</div><div class="small num ${tone(x.change)}">${x.pct === null ? "new" : signedPct(x.pct)}</div></div>`;
+
+/** Bar from the middle, right for a gain and left for a loss, scaled to `max`. */
+function changeBar(v, max) {
+  const w = max ? Math.min(50, (Math.abs(v) / max) * 50) : 0;
+  return `<div class="dbar" aria-hidden="true"><span class="${v < 0 ? "neg" : "pos"}" style="width:${w.toFixed(1)}%"></span></div>`;
+}
+
+function renderDetails(root) {
+  const d = state.data;
+  const months = monthlyDetails(d.history, d.accounts, todayIso());
+  if (!months.length) {
+    root.innerHTML = `<section class="card"><p class="muted">Month-over-month changes need snapshots from at least two months.</p></section>`;
+    return;
+  }
+  let i = months.findIndex((m) => m.period === state.detailMonth);
+  if (i < 0) i = 0;
+  const m = months[i];
+  const gap = Math.round((Date.parse(m.to) - Date.parse(m.from)) / 86400000 / 30.44);
+
+  const groupRow = (g) => `
+    <li><details><summary class="row" data-initial="${esc(g.name[0])}" style="--g:${detailColor(g.name)}"><div><div class="name">${esc(g.name)}</div><div class="meta">${span(g)}</div></div>${changeRight(g)}</summary>
+      <ul class="acct-list">${g.accounts
+        .map((a) => `<li class="row"><div><div class="name">${esc(a.name)}</div><div class="meta">${span(a)}</div></div>${changeRight(a)}</li>`)
+        .join("")}</ul>
+    </details></li>`;
+
+  // Month by month for one category (or the total).
+  const names = [...new Set(months.flatMap((x) => x.groups.map((g) => g.name)))];
+  // Categories still held come first, in Overview order; old ones after.
+  const held = months[0].groups.map((g) => g.name);
+  const chips = ["Total", ...held, ...names.filter((n) => !held.includes(n))];
+  if (!chips.includes(state.detailGroup)) state.detailGroup = "Total";
+  const pick = (x) => (state.detailGroup === "Total" ? x : x.groups.find((g) => g.name === state.detailGroup));
+  const series = months.map((x) => ({ month: x, v: pick(x) })).filter((r) => r.v);
+  const shown = state.detailAll ? series : series.slice(0, 12);
+  const max = Math.max(0, ...shown.map((r) => Math.abs(r.v.change)));
+  const monthRow = ({ month: x, v }) => `
+    <li><button class="row pick-month${x.period === m.period ? " on" : ""}" data-period="${x.period}">
+      <div><div class="name">${esc(periodName(x.period))}${x.live ? ` <span class="muted small">so far</span>` : ""}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · <span class="num">${eur(v.end)}</span></div>${changeBar(v.change, max)}</div>${changeRight(v)}
+    </button></li>`;
+
+  root.innerHTML = `
+    <section class="card month-hero">
+      <div class="month-step">
+        <button class="icon-btn" data-step="1" aria-label="Previous month"${i >= months.length - 1 ? " disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="label">${monthTitle(m.period)}${m.live ? " so far" : ""}</div>
+        <button class="icon-btn" data-step="-1" aria-label="Next month"${i === 0 ? " disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <div class="value num ${tone(m.change)}">${signedEur(m.change)}</div>
+      <div class="sub"><span class="num ${tone(m.change)}">${signedPct(m.pct)}</span> <span class="muted">·</span> ${span(m)}</div>
+      <div class="sub muted small">${shortDay(m.from)} – ${m.live ? "today" : shortDate(m.to)}${gap > 1 ? ` · ${gap} months, no snapshot in between` : ""}</div>
+    </section>
+
+    <section class="card">
+      <h2>By category</h2>
+      <ul class="list">${m.groups.map(groupRow).join("")}</ul>
+      <p class="small muted note">Tap a category to see its accounts. Changes include money moved in or out, not just growth.</p>
+    </section>
+
+    <section class="card">
+      <h2>Month by month</h2>
+      <div class="seg chips" role="group" aria-label="Category">${chips
+        .map((c) => `<button data-cat="${esc(c)}" aria-pressed="${c === state.detailGroup}">${esc(c)}</button>`)
+        .join("")}</div>
+      <ul class="list">${shown.map(monthRow).join("")}</ul>
+      ${series.length > 12 ? `<button class="btn secondary small more" id="detail-all">${state.detailAll ? "Show fewer" : `Show all ${series.length} months`}</button>` : ""}
+      <p class="small muted note">A month runs from the last snapshot of the month before to this month's last snapshot, so older months (snapshotted around the 5th) cover mostly the month before. Same months as Growth vs plan on the Goals tab.</p>
+    </section>
+  `;
+
+  root.querySelectorAll("[data-step]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const next = months[i + Number(b.dataset.step)];
+      if (!next) return;
+      state.detailMonth = next.period;
+      render();
+    }),
+  );
+  root.querySelectorAll("[data-period]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.detailMonth = b.dataset.period;
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }),
+  );
+  root.querySelectorAll("[data-cat]").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.detailGroup = b.dataset.cat;
+      ls.set(DETAIL_GROUP_KEY, state.detailGroup);
+      render();
+    }),
+  );
+  const all = $("#detail-all", root);
+  if (all) all.onclick = () => ((state.detailAll = !state.detailAll), render());
 }
 
 // ---------- retirement ----------
