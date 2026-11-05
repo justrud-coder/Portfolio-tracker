@@ -363,11 +363,15 @@ form > label.field:first-child, form > .type-pick + label.field, .two > label.fi
 .two > label.field { border-top: 1px solid var(--sep); }
 form > p.small { padding: 0 0 10px; margin: 0 !important; }
 
-/* Transaction type: pill chips, two rows of three */
+/* Asset class, action and property: pill chips that fill each row */
 .type-pick {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  display: flex; flex-wrap: wrap; gap: 8px;
   margin: 0 0 14px;
 }
+[data-actions] .type-pick, [data-for="estate"] .type-pick { margin-top: -4px; }
+/* Asset classes keep their own width so a short last row doesn't stretch. */
+.type-pick[data-pick="cls"] label { flex: 0 1 auto; }
+.type-pick[data-pick="cls"] span { padding: 9px 14px; }
 .type-pick::-webkit-scrollbar { display: none; }
 .type-pick label { position: relative; flex: 1 0 auto; }
 .type-pick input { position: absolute; opacity: 0; inset: 0; margin: 0; }

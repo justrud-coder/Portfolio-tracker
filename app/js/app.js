@@ -45,6 +45,10 @@ import {
   incomeRow,
   parseIncome,
   savingsByMonth,
+  TX_CLASSES,
+  txStart,
+  unitPriceForTotal,
+  changedValue,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { ageChart, lineChart } from "./chart.js";
@@ -284,7 +288,7 @@ function render() {
   onScroll();
 }
 
-const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", savings: "Savings", add: "New Transaction" };
+const TITLES = { home: "Portfolio", retire: "Goals", rebalance: "Rebalance", savings: "Savings", add: "Add/remove asset" };
 
 function onScroll() {
   $(".top").classList.toggle("scrolled", window.scrollY > 36);
@@ -637,7 +641,7 @@ function planVsActualCard(v) {
         <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div>${investedLine(x, r.tracking)}</div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
   const tracked = r.tracking
     ? `New money (deposits minus withdrawals, plus III pillar contributions, without Rent cash) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
-    : "Record deposits and withdrawals on the Transaction tab to compare what you invest with the plan.";
+    : "Record deposits and withdrawals on the Add/remove asset tab to compare what you invest with the plan.";
   return `
     <section class="card">
       <h2>Plan vs actual</h2>
@@ -1172,20 +1176,13 @@ async function saveIncome(f) {
 
 // ---------- add transaction ----------
 
-const TX_MODES = [
-  ["BUY", "Buy"],
-  ["SELL", "Sell"],
-  ["DEPOSIT", "Deposit"],
-  ["WITHDRAWAL", "Withdraw"],
-  ["PENSION", "III pillar"],
-  ["OPTIONS", "Options"],
-  ["REAL_ESTATE", "Real estate"],
-];
-const NEW_FUND = "__new";
+const decimal = (v) => num(String(v ?? "").replace(",", "."));
+const REPEAT_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.66 5.66L4 15.5M4 20v-4.5h4.5" /></svg>`;
+const REMOVE_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg>`;
 
 function renderAdd(root) {
   const d = state.data;
-  // Deposits and withdrawals: the active cash accounts, plus cash held at IBKR.
+  // Cash add/remove: the active cash accounts, plus cash held at IBKR.
   const cashAccounts = [
     ...d.accounts.filter((a) => a.active && a.assetClass === "Cash").map((a) => ({ value: a.name, label: a.name })),
     { value: BROKER, label: "IBKR cash" },
@@ -1195,21 +1192,33 @@ function renderAdd(root) {
   const funds = d.holdings.filter((h) => h.position === PENSION);
   const options = d.holdings.find((h) => h.position === OPTIONS);
   const properties = d.accounts.filter((a) => a.active && a.assetClass === "Real estate");
-  const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
-  const mode = TX_MODES.some(([m]) => m === last.type) ? last.type : "BUY";
+  let last = {};
+  try {
+    last = JSON.parse(ls.get("pt.lastTx") ?? "{}") ?? {};
+  } catch {}
+  const start = txStart(last);
   const recent = d.transactions.slice(-10).reverse();
   const typeLabel = (t) => {
     const x = String(t ?? "").replace(/_/g, " ").toLowerCase();
     return x.charAt(0).toUpperCase() + x.slice(1);
   };
+  const chips = (name, items, checked, label) =>
+    `<div class="type-pick" role="radiogroup" aria-label="${label}" data-pick="${name}">${items
+      .map(([v, l]) => `<label><input type="radio" name="${name}" value="${esc(v)}" ${v === checked ? "checked" : ""}><span>${esc(l)}</span></label>`)
+      .join("")}</div>`;
+  const property = properties.some((a) => a.name === last.property) ? last.property : properties[0]?.name;
 
   root.innerHTML = `
     <section class="card">
-      <h2>Add a transaction</h2>
+      <h2>What changed?</h2>
       <form id="tx" novalidate>
-        <div class="type-pick" role="radiogroup" aria-label="Type">
-          ${TX_MODES.map(([m, label]) => `<label><input type="radio" name="type" value="${m}" ${m === mode ? "checked" : ""}><span>${label}</span></label>`).join("")}
-        </div>
+        ${chips("cls", TX_CLASSES.map((c) => [c.id, c.label]), start.cls, "Asset class")}
+        <div data-for="estate">${
+          properties.length
+            ? chips("property", properties.map((a) => [a.name, a.name]), property, "Property")
+            : `<p class="small">The sheet has no active Real estate accounts.</p>`
+        }</div>
+        ${TX_CLASSES.map((c) => `<div data-actions="${c.id}">${chips(`act_${c.id}`, c.actions, c.id === start.cls ? start.mode : c.actions[0][0], `${c.label} action`)}</div>`).join("")}
         <label class="field">Date<input type="date" name="date" value="${todayIso()}" required></label>
         <div class="two" data-for="trade">
           <label class="field">Account<span class="static">IBKR</span></label>
@@ -1223,36 +1232,33 @@ function renderAdd(root) {
             <select name="account">${cashAccounts.map((a) => `<option value="${esc(a.value)}" ${a.value === last.account ? "selected" : ""}>${esc(a.label)}</option>`).join("")}</select>
           </label>
           <div class="field" data-for="cashmode">How
-            <div class="seg" role="radiogroup" aria-label="Deposit as">
+            <div class="seg" role="radiogroup" aria-label="Add as">
               <label><input type="radio" name="cashMode" value="add" checked><span>Add amount</span></label>
               <label><input type="radio" name="cashMode" value="total"><span>New total</span></label>
             </div>
           </div>
           <label class="field"><span id="cashLabel">Amount (€)</span><input name="cash" inputmode="decimal" autocomplete="off"></label>
         </div>
-        <div class="two" data-for="pension">
+        <div class="two" data-for="fund">
           <label class="field">Fund
-            <select name="fund">${funds.map((h) => `<option value="${esc(h.symbol)}" ${h.symbol === last.fund ? "selected" : ""}>${esc(h.name || h.symbol)}</option>`).join("")}<option value="${NEW_FUND}" ${funds.length ? "" : "selected"}>New fund…</option></select>
+            <select name="fund">${funds.map((h) => `<option value="${esc(h.symbol)}" ${h.symbol === last.fund ? "selected" : ""}>${esc(h.name || h.symbol)}</option>`).join("")}</select>
           </label>
-          <label class="field" data-for="newfund">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
+        </div>
+        <div class="two" data-for="newfund">
+          <label class="field">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
           <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
           <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
-          <label class="field">New unit value (€)<input name="pensionValue" inputmode="decimal" autocomplete="off" placeholder="optional"></label>
         </div>
-        <div class="two" data-for="options">
-          <label class="field">Options received<input name="optionUnits" inputmode="decimal" autocomplete="off" placeholder="${options ? `${num(options.units)} held now` : ""}"></label>
-          <label class="field">Value per option (€)<input name="optionValue" inputmode="decimal" autocomplete="off" value="${options?.price ?? ""}"></label>
+        <div class="two" data-for="total">
+          <label class="field">New total value (€)<input name="totalValue" inputmode="decimal" autocomplete="off"></label>
         </div>
-        <div class="two" data-for="realestate">
-          <label class="field">Property
-            <select name="property">${properties.map((a) => `<option value="${esc(a.name)}" ${a.name === last.property ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select>
-          </label>
-          <label class="field">New value (€)<input name="propertyValue" inputmode="decimal" autocomplete="off"></label>
+        <div class="two" data-for="change">
+          <label class="field"><span id="changeLabel">Increase by (€)</span><input name="change" inputmode="decimal" autocomplete="off"></label>
         </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
         <ul class="errors" id="txErrors"></ul>
-        <button class="btn" id="txSave">Save transaction</button>
+        <button class="btn" id="txSave">Save</button>
       </form>
     </section>
     ${
@@ -1261,9 +1267,12 @@ function renderAdd(root) {
             .map((t) => {
               const c = t.cells;
               const v = transactionValue(c);
+              const repeat = repeatForm(c, todayIso())
+                ? `<button class="rep-btn" data-row="${t.row}" aria-label="Repeat this transaction" title="Repeat">${REPEAT_SVG}</button>`
+                : "";
               return `<li><div class="row"><div><div class="name">${esc(c[3] || c[1])}</div><div class="meta">${esc(typeLabel(c[2]))}${c[3] ? ` · ${esc(c[1])}` : ""} · ${
                 serialToIso(c[0]) ? shortDate(serialToIso(c[0])) : "no date"
-              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div><button class="rep-btn" data-row="${t.row}" aria-label="Repeat this transaction" title="Repeat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.66 5.66L4 15.5M4 20v-4.5h4.5" /></svg></button><button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M7.5 12h9" /></svg></button></div></li>`;
+              }${c[4] ? ` · ${num(c[4])} units` : ""}</div></div><div class="right num">${Number.isFinite(v) ? eurCents(v) : "–"}</div>${repeat}<button class="del-btn" data-row="${t.row}" aria-label="Remove this transaction" title="Remove">${REMOVE_SVG}</button></div></li>`;
             })
             .join("")}</ul></section>`
         : ""
@@ -1290,13 +1299,19 @@ function renderAdd(root) {
   }
 
   const form = $("#tx");
+  const pick = (name, value) => {
+    const el = form.querySelector(`input[name="${name}"][value="${CSS.escape(value)}"]`);
+    if (el) el.checked = true;
+  };
   for (const b of root.querySelectorAll(".rep-btn")) {
     b.onclick = () => {
       const t = d.transactions.find((x) => x.row === Number(b.dataset.row));
       const v = t && repeatForm(t.cells, todayIso());
       if (!v) return showBanner("This transaction can't be repeated from here.", "error");
       form.reset();
-      form.querySelector(`input[name="type"][value="${v.type}"]`).checked = true;
+      const { cls, mode } = txStart({ type: v.type });
+      pick("cls", cls);
+      pick(`act_${cls}`, mode);
       for (const [k, val] of Object.entries(v)) {
         const el = form.elements[k];
         if (!el || k === "type") continue;
@@ -1309,22 +1324,35 @@ function renderAdd(root) {
       showBanner("Filled in from that transaction with today's date. Check it and tap Save.", "ok");
     };
   }
-  const sync = () => {
+
+  const current = () => {
     const f = new FormData(form);
-    const type = f.get("type");
-    const trade = type === "BUY" || type === "SELL";
-    const pension = type === "PENSION";
-    form.querySelector('[data-for="trade"]').hidden = !trade;
-    const opts = type === "OPTIONS";
-    const estate = type === "REAL_ESTATE";
-    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate;
-    form.querySelector('[data-for="realestate"]').hidden = !estate;
-    form.querySelector('[data-for="pension"]').hidden = !pension;
-    form.querySelector('[data-for="options"]').hidden = !opts;
-    const toTotal = type === "DEPOSIT" && f.get("cashMode") === "total";
-    form.querySelector('[data-for="cashmode"]').hidden = type !== "DEPOSIT";
+    const cls = f.get("cls");
+    return { f, cls, mode: f.get(`act_${cls}`) };
+  };
+  const show = (key, on) => {
+    for (const el of form.querySelectorAll(`[data-for="${key}"]`)) el.hidden = !on;
+  };
+  const unit = (x) => `${x.toLocaleString("en-IE", { maximumFractionDigits: 6 })} €`;
+  const sync = () => {
+    const { f, cls, mode } = current();
+    for (const el of form.querySelectorAll("[data-actions]")) {
+      // A class with one action needs no second row of chips.
+      const c = TX_CLASSES.find((x) => x.id === el.dataset.actions);
+      el.hidden = el.dataset.actions !== cls || c.actions.length < 2;
+    }
+    const trade = cls === "stocks";
+    show("trade", trade);
+    show("cash", cls === "cash");
+    show("cashmode", mode === "DEPOSIT");
+    show("fund", mode === "PENSION_VALUE");
+    show("newfund", mode === "PENSION_NEW");
+    show("total", mode === "PENSION_VALUE" || mode === "OPTIONS_VALUE");
+    show("estate", cls === "estate");
+    show("change", cls === "estate");
+    const toTotal = mode === "DEPOSIT" && f.get("cashMode") === "total";
     $("#cashLabel").textContent = toTotal ? "New total (€)" : "Amount (€)";
-    form.querySelector('[data-for="newfund"]').hidden = f.get("fund") !== NEW_FUND;
+    $("#changeLabel").textContent = mode === "ESTATE_DOWN" ? "Decrease by (€)" : "Increase by (€)";
     let msg = "";
     if (trade) {
       const units = num(f.get("units"));
@@ -1332,40 +1360,36 @@ function renderAdd(root) {
       const have = brokerCash?.value ?? 0;
       if (units && price) {
         const total = units * price;
-        msg = `Total ${eurCents(total)}. ${type === "BUY" ? `Paid from IBKR cash (${eurCents(have)} now, ${eurCents(have - total)} after).` : `Paid into IBKR cash (${eurCents(have + total)} after).`}`;
+        msg = `Total ${eurCents(total)}. ${mode === "BUY" ? `Paid from IBKR cash (${eurCents(have)} now, ${eurCents(have - total)} after).` : `Paid into IBKR cash (${eurCents(have + total)} after).`}`;
       }
-    } else if (pension) {
+    } else if (cls === "cash") {
+      const acct = f.get("account");
+      const now = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
+      const amount = decimal(f.get("cash"));
+      if (toTotal) {
+        const move = amount === null ? null : moveToTotal(now, amount);
+        msg = `Now ${eurCents(now)}.${amount === null ? "" : move ? ` Saves a ${move.type.toLowerCase()} of ${eurCents(move.amount)}.` : " No change."}`;
+      } else {
+        msg = `Now ${eurCents(now)}${amount ? `, ${eurCents(mode === "DEPOSIT" ? now + amount : now - amount)} after` : ""}.`;
+      }
+    } else if (mode === "PENSION_VALUE" || mode === "OPTIONS_VALUE") {
+      const pos = mode === "OPTIONS_VALUE" ? options : funds.find((h) => h.symbol === f.get("fund"));
+      const total = decimal(f.get("totalValue"));
+      if (!pos) msg = mode === "OPTIONS_VALUE" ? "The sheet has no Vinted options position on the Holdings tab." : "No III pillar funds yet. Add a new fund first.";
+      else {
+        const price = unitPriceForTotal(total, pos.units);
+        msg = `Now ${eurCents(pos.value ?? 0)}${
+          price !== null ? `, ${eurCents(total)} after (${total >= pos.value ? "+" : "−"}${eurCents(Math.abs(total - pos.value))}). ${num(pos.units.toFixed(4))} units at ${unit(price)}.` : "."
+        }`;
+      }
+    } else if (mode === "PENSION_NEW") {
       const units = num(f.get("pensionUnits"));
       const cash = num(f.get("pensionCash"));
-      const value = num(String(f.get("pensionValue") ?? "").replace(",", "."));
-      const fund = funds.find((h) => h.symbol === f.get("fund"));
-      const unit = (x) => `${x.toLocaleString("en-IE", { maximumFractionDigits: 6 })} €`;
-      if (value && fund) {
-        const held = (num(fund.units) ?? 0) + (units ?? 0);
-        msg = `${held.toLocaleString("en-IE", { maximumFractionDigits: 2 })} units × ${unit(value)} = ${eurCents(held * value)} (now ${eurCents(fund.value ?? 0)}).`;
-      } else if (units && cash) {
-        msg = `Unit price ${unit(cash / units)}. It becomes the fund's latest price.`;
-      } else if (fund) {
-        msg = `Unit value now ${unit(num(fund.price) ?? 0)}. Enter a new unit value to update the total, units to add a contribution, or both.`;
-      }
-    } else if (type === "DEPOSIT" || type === "WITHDRAWAL") {
-      const acct = f.get("account");
-      const current = acct === BROKER ? brokerCash?.value ?? 0 : d.accounts.find((a) => a.name === acct)?.value ?? 0;
-      const amount = num(String(f.get("cash") ?? "").replace(",", "."));
-      if (toTotal) {
-        const move = amount === null ? null : moveToTotal(current, amount);
-        msg = `Now ${eurCents(current)}.${amount === null ? "" : move ? ` Saves a ${move.type.toLowerCase()} of ${eurCents(move.amount)}.` : " No change."}`;
-      } else {
-        msg = `Now ${eurCents(current)}${amount ? `, ${eurCents(type === "DEPOSIT" ? current + amount : current - amount)} after` : ""}.`;
-      }
-    } else if (estate) {
+      if (units && cash) msg = `Unit price ${unit(cash / units)}. It becomes the fund's latest price.`;
+    } else if (cls === "estate") {
       const acct = properties.find((a) => a.name === f.get("property"));
-      const value = num(String(f.get("propertyValue") ?? "").replace(",", "."));
-      if (acct) msg = `Now ${eurCents(acct.value)}${value !== null ? `, ${eurCents(value)} after (${value >= acct.value ? "+" : "−"}${eurCents(Math.abs(value - acct.value))})` : ""}.`;
-    } else if (opts && options) {
-      const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
-      const value = num(f.get("optionValue")) ?? options.price ?? 0;
-      msg = `${num(total.toFixed(4))} options × ${eurCents(value)} = ${eurCents(total * value)}.`;
+      const amount = decimal(f.get("change"));
+      if (acct) msg = `Now ${eurCents(acct.value)}${amount ? `, ${eurCents(changedValue(acct.value, amount, mode === "ESTATE_UP"))} after` : ""}.`;
     }
     $("#txPreview").textContent = msg;
   };
@@ -1375,36 +1399,32 @@ function renderAdd(root) {
 
   form.onsubmit = async (e) => {
     e.preventDefault();
+    const { cls, mode } = current();
     const f = Object.fromEntries(new FormData(form));
-    if (f.type === "OPTIONS") return saveOptionsForm(f, options);
-    if (f.type === "REAL_ESTATE") return saveRealEstate(f);
-    if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
-    if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
-      return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
-    const pensionValue = num(String(f.pensionValue ?? "").replace(",", "."));
-    if (f.type === "PENSION" && String(f.pensionValue ?? "").trim() && !(pensionValue > 0)) {
-      $("#txErrors").innerHTML = "<li>New unit value must be more than 0.</li>";
-      return;
-    }
-    const pension = f.type === "PENSION";
-    const newFund = pension && f.fund === NEW_FUND;
-    const input = pension ? { ...f, fund: newFund ? f.fundName : f.fund, units: f.pensionUnits, cash: f.pensionCash } : f;
+    if (mode === "OPTIONS_VALUE") return savePositionTotal(f, OPTIONS, options, "OPTIONS_VALUE");
+    if (mode === "PENSION_VALUE") return savePositionTotal(f, PENSION, funds.find((h) => h.symbol === f.fund), "PENSION_VALUE");
+    if (cls === "estate") return saveRealEstate(f, mode === "ESTATE_UP");
+    if (mode === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
+    const pension = mode === "PENSION_NEW";
+    const input = pension ? { ...f, type: "PENSION", fund: f.fundName, units: f.pensionUnits, cash: f.pensionCash } : { ...f, type: mode };
     const { row, errors } = transactionRow(input);
+    if (pension && !String(f.fundName ?? "").trim()) errors.unshift("Enter the fund's name.");
     $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
-    if (!row) return;
+    if (!row || errors.length) return;
     const btn = $("#txSave");
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
       let what;
       if (pension) {
-        const fund = await savePension(row, newFund ? String(f.fundName).trim() : null, pensionValue);
-        what = `${num(row[4])} units of ${esc(fund.name)}${pensionValue ? ` and a unit value of ${pensionValue} €` : ""}`;
-        ls.set("pt.lastTx", JSON.stringify({ type: f.type, fund: fund.symbol }));
+        const fund = await savePension(row, String(f.fundName).trim());
+        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        // Next time, open on the fund just made.
+        ls.set("pt.lastTx", JSON.stringify({ mode: "PENSION_VALUE", fund: fund.symbol }));
       } else {
         await saveTransaction(row);
         what = `${esc(row[2].toLowerCase())}${row[3] && row[3] !== BROKER_CASH ? ` ${esc(row[3])}` : ""} on ${esc(row[1] === BROKER && row[3] === BROKER_CASH ? "IBKR cash" : row[1])}`;
-        ls.set("pt.lastTx", JSON.stringify({ type: f.type, account: f.account }));
+        ls.set("pt.lastTx", JSON.stringify({ mode, account: f.account }));
       }
       showBanner(`Saved ${what}.`, "ok");
       await load({ quiet: true });
@@ -1412,7 +1432,7 @@ function renderAdd(root) {
       if (err instanceof AuthError) needSignIn();
       else showBanner(esc(err.message || String(err)), "error");
       btn.disabled = false;
-      btn.textContent = "Save transaction";
+      btn.textContent = "Save";
     }
   };
 }
@@ -1472,11 +1492,11 @@ async function savePension(row, newFundName, unitValue = null) {
  * the form's date (replacing one already saved for that day). The account's
  * value then starts from it.
  */
-async function saveRealEstate(f) {
-  const value = num(String(f.propertyValue ?? "").replace(",", "."));
+async function saveRealEstate(f, up) {
+  const amount = num(String(f.change ?? "").replace(",", "."));
   const errors = [];
   if (!f.property) errors.push("The sheet has no active Real estate accounts.");
-  if (value === null || value < 0) errors.push("Enter the new value, 0 or more.");
+  if (amount === null || !(amount > 0)) errors.push(`Enter how much to ${up ? "increase" : "decrease"} the value by.`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
   if (f.date > todayIso()) errors.push("The date can't be in the future.");
   $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
@@ -1485,33 +1505,41 @@ async function saveRealEstate(f) {
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
-    // Re-read History so the row lands after whatever is there now.
-    const [grid] = await sheets.batchGet([RANGES.history]);
+    // Re-read History so the row lands after whatever is there now, and the
+    // account so the change is applied to its value as it is now.
+    const [grid, accountsGrid] = await sheets.batchGet([RANGES.history, RANGES.accounts]);
+    const acct = parseAccounts(accountsGrid).find((a) => a.name === f.property);
+    if (!acct) throw new Error(`${f.property} isn't on the Accounts tab any more. Refresh and try again.`);
+    const value = changedValue(acct.value, amount, up);
+    if (value < 0) throw new Error(`${f.property} is ${eurCents(acct.value)}, so it can't go down by ${eurCents(amount)}.`);
     const note = String(f.note ?? "").trim() || "Set in the app";
-    const plan = planSnapshot(f.date, [{ account: f.property, value: Math.round(value * 100) / 100, note }], parseHistory(grid), nextFreeRow(grid));
+    const plan = planSnapshot(f.date, [{ account: f.property, value, note }], parseHistory(grid), nextFreeRow(grid));
     const meta = await freshMeta();
     const tab = meta.tabs.History;
     if (!tab) throw new Error("The sheet has no History tab.");
     await sheets.ensureRows(tab, plan.lastRow);
     await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
-    ls.set("pt.lastTx", JSON.stringify({ type: "REAL_ESTATE", property: f.property }));
-    showBanner(`Saved ${esc(f.property)} at ${eurCents(value)}.`, "ok");
+    ls.set("pt.lastTx", JSON.stringify({ mode: up ? "ESTATE_UP" : "ESTATE_DOWN", property: f.property }));
+    showBanner(`Saved ${esc(f.property)} at ${eurCents(value)} (${up ? "+" : "−"}${eurCents(amount)}).`, "ok");
     await load({ quiet: true });
   } catch (err) {
     if (err instanceof AuthError) needSignIn();
     else showBanner(esc(err.message || String(err)), "error");
     btn.disabled = false;
-    btn.textContent = "Save transaction";
+    btn.textContent = "Save";
   }
 }
 
-/** III pillar with only a new unit value: update the fund's latest price, no transaction. */
-async function savePensionValue(f, fund) {
-  const value = num(String(f.pensionValue ?? "").replace(",", "."));
+/**
+ * III pillar fund or options: overwrite the position's total value. The units
+ * stay as they are and the price per unit becomes total / units.
+ */
+async function savePositionTotal(f, position, pos, mode) {
+  const total = num(String(f.totalValue ?? "").replace(",", "."));
   const errors = [];
-  if (!fund) errors.push("Pick a fund.");
-  if (!String(f.pensionValue ?? "").trim()) errors.push("Enter units and the amount paid, a new unit value, or both.");
-  else if (!(value > 0)) errors.push("New unit value must be more than 0.");
+  if (!pos) errors.push(position === OPTIONS ? "The sheet has no Vinted options position on the Holdings tab." : "Pick a fund.");
+  if (total === null || total < 0) errors.push("Enter the new total value, 0 or more.");
+  else if (pos && unitPriceForTotal(total, pos.units) === null) errors.push(`${esc(pos.name || pos.symbol)} has no units on the Holdings tab, so there's nothing to value.`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
   $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
   if (errors.length) return;
@@ -1519,64 +1547,21 @@ async function savePensionValue(f, fund) {
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
-    // Re-read so the right Holdings row is written even if rows moved.
-    const [holdings] = await sheets.batchGet([RANGES.holdings]);
-    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === fund.symbol);
-    if (i < 0) throw new Error(`The fund ${fund.symbol} isn't on the Holdings tab any more. Refresh and try again.`);
-    await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
-    ls.set("pt.lastTx", JSON.stringify({ type: "PENSION", fund: fund.symbol }));
-    const units = num(fund.units) ?? 0;
-    showBanner(`Saved a unit value of ${value} € for ${esc(fund.name || fund.symbol)}: ${eurCents(units * value)} in total.`, "ok");
+    // Re-read so the right Holdings row and the latest units are used even if rows moved.
+    const [grid] = await sheets.batchGet([RANGES.holdings]);
+    const fresh = parseHoldings(grid).find((h) => h.position === position && h.symbol === pos.symbol);
+    if (!fresh) throw new Error(`${pos.name || pos.symbol} isn't on the Holdings tab any more. Refresh and try again.`);
+    const price = unitPriceForTotal(total, fresh.units);
+    if (price === null) throw new Error(`${pos.name || pos.symbol} has no units on the Holdings tab.`);
+    await sheets.write([{ range: `Holdings!F${fresh.row}`, values: [[price]] }, { range: `Holdings!H${fresh.row}`, values: [[f.date]] }]);
+    ls.set("pt.lastTx", JSON.stringify({ mode, fund: position === PENSION ? pos.symbol : undefined }));
+    showBanner(`Saved ${esc(pos.name || pos.symbol)} at ${eurCents(total)}.`, "ok");
     await load({ quiet: true });
   } catch (err) {
     if (err instanceof AuthError) needSignIn();
     else showBanner(esc(err.message || String(err)), "error");
     btn.disabled = false;
-    btn.textContent = "Save transaction";
-  }
-}
-
-/** Options tab of the form: add options received and/or set the value per option. */
-async function saveOptionsForm(f, options) {
-  const units = String(f.optionUnits ?? "").trim();
-  const value = num(String(f.optionValue ?? "").replace(",", "."));
-  const errors = [];
-  if (!options) errors.push("The sheet has no Vinted options position on the Holdings tab.");
-  if (!units && value === null) errors.push("Enter the options received, the value per option, or both.");
-  if (String(f.optionValue ?? "").trim() && !(value > 0)) errors.push("Value per option must be more than 0.");
-  let row = null;
-  if (units && options) {
-    const r = transactionRow({ ...f, symbol: options.symbol, units });
-    errors.push(...r.errors);
-    row = r.row;
-  }
-  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
-  if (errors.length) return;
-  const btn = $("#txSave");
-  btn.disabled = true;
-  btn.textContent = "Saving…";
-  try {
-    const done = [];
-    if (value !== null && value !== options.price) {
-      // Re-read so the right Holdings row is written even if rows moved.
-      const [holdings] = await sheets.batchGet([RANGES.holdings]);
-      const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === OPTIONS && r?.[1] === options.symbol);
-      if (i < 0) throw new Error("The Vinted options row moved on the Holdings tab. Refresh and try again.");
-      await sheets.write([{ range: `Holdings!F${i + 1}`, values: [[value]] }, { range: `Holdings!H${i + 1}`, values: [[f.date]] }]);
-      done.push(`value ${eurCents(value)} per option`);
-    }
-    if (row) {
-      await saveTransaction(row);
-      done.push(`${num(row[4])} new options`);
-    }
-    ls.set("pt.lastTx", JSON.stringify({ type: "OPTIONS" }));
-    showBanner(done.length ? `Saved ${esc(done.join(" and "))}.` : "Nothing changed.", "ok");
-    await load({ quiet: true });
-  } catch (err) {
-    if (err instanceof AuthError) needSignIn();
-    else showBanner(esc(err.message || String(err)), "error");
-    btn.disabled = false;
-    btn.textContent = "Save transaction";
+    btn.textContent = "Save";
   }
 }
 
@@ -1608,13 +1593,13 @@ async function saveNewTotal(f) {
       await saveTransaction(row);
       showBanner(`Saved a ${move.type.toLowerCase()} of ${eurCents(move.amount)}: ${esc(label)} is now ${eurCents(total)}.`, "ok");
     }
-    ls.set("pt.lastTx", JSON.stringify({ type: "DEPOSIT", account: f.account }));
+    ls.set("pt.lastTx", JSON.stringify({ mode: "DEPOSIT", account: f.account }));
     await load({ quiet: true });
   } catch (err) {
     if (err instanceof AuthError) needSignIn();
     else showBanner(esc(err.message || String(err)), "error");
     btn.disabled = false;
-    btn.textContent = "Save transaction";
+    btn.textContent = "Save";
   }
 }
 

@@ -371,8 +371,8 @@ test("overview changes, account groups, new-total deposits and repeats", async (
 
   assert.deepEqual(m.repeatForm(["2026-11-01", "IBKR", "BUY", "VWCE.DE", 2, 170, "", "", "x"], "2026-12-01"), { date: "2026-12-01", note: "x", type: "BUY", symbol: "VWCE.DE", units: 2, price: 170 });
   assert.deepEqual(m.repeatForm(["", "Cash", "DEPOSIT", "", "", "", "", 500, ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "DEPOSIT", account: "Cash", cash: 500 });
-  assert.deepEqual(m.repeatForm(["", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.7034, "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "PENSION", fund: "ARTEA-AA16", pensionUnits: 142.17, pensionCash: 100 });
-  assert.deepEqual(m.repeatForm(["", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""], "2026-12-01"), { date: "2026-12-01", note: "", type: "OPTIONS", optionUnits: 40 });
+  assert.equal(m.repeatForm(["", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.7034, "", "", ""], "2026-12-01"), null);
+  assert.equal(m.repeatForm(["", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""], "2026-12-01"), null);
 });
 
 test("changedInputs lists only the inputs that differ from the saved plan", async () => {
@@ -489,4 +489,29 @@ test("savingsByMonth gives the rate per month and the average over months with i
   assert.equal(s.months[2].rate, 0.25);
   assert.equal(s.average, 2000 / 8000);
   assert.equal(s.monthsWithIncome, 2);
+});
+
+test("transaction picker: class and action", async () => {
+  const m = await import("../app/js/model.js");
+  assert.deepEqual(m.txStart({}), { cls: "stocks", mode: "BUY" });
+  assert.deepEqual(m.txStart({ type: "WITHDRAWAL" }), { cls: "cash", mode: "WITHDRAWAL" });
+  assert.deepEqual(m.txStart({ type: "PENSION" }), { cls: "pension", mode: "PENSION_VALUE" });
+  assert.deepEqual(m.txStart({ type: "REAL_ESTATE" }), { cls: "estate", mode: "ESTATE_UP" });
+  assert.deepEqual(m.txStart({ mode: "ESTATE_DOWN" }), { cls: "estate", mode: "ESTATE_DOWN" });
+  assert.deepEqual(m.txStart({ type: "NOPE" }), { cls: "stocks", mode: "BUY" });
+});
+
+test("unit price for a new total value", async () => {
+  const m = await import("../app/js/model.js");
+  assert.equal(m.unitPriceForTotal(1500, 1000), 1.5);
+  assert.equal(m.unitPriceForTotal(0, 10), 0);
+  assert.equal(m.unitPriceForTotal(1500, 0), null);
+  assert.equal(m.unitPriceForTotal(null, 10), null);
+  assert.equal(m.unitPriceForTotal(-1, 10), null);
+});
+
+test("real estate increase and decrease", async () => {
+  const m = await import("../app/js/model.js");
+  assert.equal(m.changedValue(100000, 2500.555, true), 102500.56);
+  assert.equal(m.changedValue(100000, 2500, false), 97500);
 });
