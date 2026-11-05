@@ -484,3 +484,17 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
 .field .unit { color: var(--muted); flex: none; }
 .hero form > label.field:first-child { border-top: 0; }
 .hero .field input { font-weight: 700; font-size: 18px; }
+
+/* Retire-at-each-age chart */
+.chart .line.need { stroke: var(--muted); stroke-dasharray: 5 4; }
+.chart .dot.need { fill: var(--muted); }
+.chart .mark { stroke-width: 1; stroke-dasharray: 2 3; }
+.chart .mark.goal { stroke: var(--muted); }
+.chart .mark.earliest { stroke: var(--accent); }
+.chart-legend .swatch.have { background: var(--accent); }
+.chart-legend .swatch.need { background: var(--muted); }
+.tip-card .key.have { background: var(--accent); }
+.tip-card .key.need { background: var(--muted); }
+.age-picks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; font-size: 15px; }
+.age-picks li { display: flex; justify-content: space-between; gap: 8px; }
+.age-picks .num { font-weight: 600; }

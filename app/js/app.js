@@ -46,7 +46,7 @@ import {
   savingsByMonth,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
-import { lineChart } from "./chart.js";
+import { ageChart, lineChart } from "./chart.js";
 
 const RANGES = {
   accounts: "Accounts!A1:L300",
@@ -579,19 +579,29 @@ function whatIfCard(saved) {
 
 
 function byAgeCard(v, plan) {
-  const anchor = Math.max(v.retireAge, plan.earliestAge ?? v.retireAge);
-  const rows = plan.byAge.filter((r) => r.age <= anchor + 5);
+  const pick = plan.byAge.find((r) => r.age === plan.earliestAge);
+  const goal = plan.byAge.find((r) => r.age === v.retireAge);
+  const line = (r, what) =>
+    r
+      ? `<li><span>${what}: <strong>${r.age}</strong> (${thisYear() + r.age - v.currentAge})</span><span class="num">${eur(r.spendFuture)}/mo</span></li>`
+      : "";
   return `
     <section class="card">
       <h2>Retire at each age</h2>
-      <ul class="list">${rows
-        .map((r) => {
-          const mark = r.age === plan.earliestAge ? " · earliest" : r.age === v.retireAge ? " · your goal" : "";
-          return `<li><div class="row${r.age === plan.earliestAge ? " pick" : ""}"><div><div class="name">Age ${r.age}<span class="muted">${mark}</span></div><div class="meta num">Have ${eur(r.portfolioFuture)} · need ${eur(r.neededFuture)} (${thisYear() + r.age - v.currentAge})</div></div><div class="right"><div class="num ${r.canRetire ? "up" : ""}">${eur(r.spend)}/mo</div><div class="small muted">${r.canRetire ? "Enough" : `${eur(r.neededFuture - r.portfolioFuture)} short`}</div></div></div></li>`;
-        })
-        .join("")}</ul>
-      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Have and need are in the euros of each year. The monthly spend each portfolio pays until ${esc(v.endAge)} is in today's money, if you keep investing ${eur(v.monthly)}/month until that age.</p>
+      <div class="chart" id="ageChart"></div>
+      <ul class="age-picks">${line(goal, "Your goal")}${pick && pick !== goal ? line(pick, "Earliest") : ""}</ul>
+      <p class="small muted" style="margin:8px 0 0">Tap the chart to see any age. Amounts are in the euros of the year you'd retire: what you'd have, what you'd need, and the monthly spend it pays until ${esc(v.endAge)}, if you keep investing ${eur(v.monthly)}/month until then.</p>
     </section>`;
+}
+
+function drawAgeChart(v, plan) {
+  const host = $("#ageChart");
+  if (!host) return;
+  const anchor = Math.max(v.retireAge, plan.earliestAge ?? v.retireAge);
+  const rows = plan.byAge
+    .filter((r) => r.age <= anchor + 5)
+    .map((r) => ({ age: r.age, have: r.portfolioFuture, need: r.neededFuture, spend: r.spendFuture, year: thisYear() + r.age - v.currentAge }));
+  ageChart(host, rows, { goal: v.retireAge, earliest: plan.earliestAge });
 }
 
 function renderRetire(root) {
@@ -643,9 +653,11 @@ function renderRetire(root) {
   const sync = () => {
     const { v, errors } = read();
     if (!errors.length) {
-      const out = retireSummary(v, retirementPlan(v, countedValue(d.accounts, v.counted)));
+      const plan = retirementPlan(v, countedValue(d.accounts, v.counted));
+      const out = retireSummary(v, plan);
       $("#retireHero").innerHTML = out.hero;
       $("#retireSummary").innerHTML = out.details;
+      drawAgeChart(v, plan);
       $("#whatIfReadout").innerHTML = out.readout;
       for (const s of sliders) {
         const k = s.dataset.key;
