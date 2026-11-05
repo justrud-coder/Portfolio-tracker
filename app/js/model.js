@@ -449,12 +449,8 @@ export function moveToTotal(current, newTotal) {
 export function repeatForm(cells, today) {
   const [, account, type, symbol, units, price, , cash, note] = cells;
   const base = { date: today, note: String(note ?? "") };
-  if (account === PENSION && type === "BUY") {
-    const u = num(units);
-    const p = num(price);
-    return { ...base, type: "PENSION", fund: symbol, pensionUnits: u ?? "", pensionCash: u && p ? Math.round(u * p * 100) / 100 : "" };
-  }
-  if (account === OPTIONS && type === "BUY") return { ...base, type: "OPTIONS", optionUnits: num(units) ?? "" };
+  // III pillar and options are now set by their total value, so there's nothing to repeat.
+  if (account === PENSION || account === OPTIONS) return null;
   if (type === "BUY" || type === "SELL") return { ...base, type, symbol, units: num(units) ?? "", price: num(price) ?? "" };
   if (type === "DEPOSIT" || type === "WITHDRAWAL") return { ...base, type, account, cash: num(cash) ?? "" };
   return null;
@@ -1267,4 +1263,39 @@ export function planVsActual(p, monthly, transactions = [], { live = null, today
     last12,
     tracking,
   };
+}
+
+/**
+ * The Transaction tab's two-level picker: an asset class, then an action.
+ * Each pair maps to one form `mode` that decides the fields and the save.
+ */
+export const TX_CLASSES = [
+  { id: "stocks", label: "Stocks", actions: [["BUY", "Buy"], ["SELL", "Sell"]] },
+  { id: "cash", label: "Cash", actions: [["DEPOSIT", "Add"], ["WITHDRAWAL", "Remove"]] },
+  { id: "pension", label: "III pillar", actions: [["PENSION_VALUE", "Current funds"], ["PENSION_NEW", "Add new fund"]] },
+  { id: "options", label: "Options", actions: [["OPTIONS_VALUE", "New total value"]] },
+  { id: "estate", label: "Real estate", actions: [["ESTATE_UP", "Increase"], ["ESTATE_DOWN", "Decrease"]] },
+];
+
+/** Class and mode to open the form on, from what was saved last (older saves used a single type). */
+export function txStart(last = {}) {
+  const legacy = { PENSION: "PENSION_VALUE", OPTIONS: "OPTIONS_VALUE", REAL_ESTATE: "ESTATE_UP" };
+  const mode = legacy[last.type] ?? last.mode ?? last.type;
+  for (const c of TX_CLASSES) if (c.actions.some(([m]) => m === mode)) return { cls: c.id, mode };
+  return { cls: "stocks", mode: "BUY" };
+}
+
+/**
+ * Price per unit that makes a position worth `total` with `units` held.
+ * Null when there are no units to spread the value over.
+ */
+export function unitPriceForTotal(total, units) {
+  const u = num(units);
+  if (!(u > 0) || total === null || !Number.isFinite(total) || total < 0) return null;
+  return total / u;
+}
+
+/** A property's value after an increase or decrease of `amount`, rounded to cents. */
+export function changedValue(current, amount, up) {
+  return Math.round(((current ?? 0) + (up ? amount : -amount)) * 100) / 100;
 }
