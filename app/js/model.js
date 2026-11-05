@@ -1158,16 +1158,15 @@ export function investTrackingStart(transactions) {
 }
 
 /**
- * Growth the plan expects from a start value over `months`: the nominal
- * return before retirement on the value, plus the fixed monthly investment
- * (added at each month end, earning the same return).
+ * Growth the plan expects from a start value over `months`: the start value
+ * growing at the nominal return before retirement (real return plus
+ * inflation, compounded monthly), plus the monthly investment for each month.
+ * A stretch of 1.5 months expects 1.5 × the monthly investment.
  */
 export function planGrowth(p, start, months) {
-  const i = nominalMonthly(p);
-  const g = (1 + i) ** months;
+  const returns = start * ((1 + nominalMonthly(p)) ** months - 1);
   const invested = p.monthly * months;
-  const total = start * (g - 1) + p.monthly * (i === 0 ? months : (g - 1) / i);
-  return { total, invested, returns: total - invested };
+  return { total: returns + invested, invested, returns };
 }
 
 /** Last point of each calendar period (`len` 7 = month, 4 = year), oldest first. */
