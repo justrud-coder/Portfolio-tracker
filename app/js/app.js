@@ -382,13 +382,20 @@ function renderHome(root) {
     $("#chart-change").innerHTML =
       diff === null ? "" : `<span class="${tone(diff)} num">${signedEur(diff)}${first.value ? ` (${signedPct(diff / first.value)})` : ""}</span> <span class="muted">since ${shortDate(first.date)}</span>`;
   };
-  draw();
-  for (const form of root.querySelectorAll("form.edit-row")) {
+  // One handler on the view for every row's edit form, set before the chart
+  // is drawn so a chart error can't leave Save doing a plain page reload.
+  root.onsubmit = (e) => {
+    const form = e.target.closest?.("form.edit-row");
+    if (!form) return;
+    e.preventDefault();
     const item = editable[Number(form.dataset.i)];
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      saveRowEdit(form, item);
-    };
+    if (!item) return showBanner("That row changed. Refresh and try again.", "error");
+    saveRowEdit(form, item).catch((err) => showBanner(esc(err.message || String(err)), "error"));
+  };
+  try {
+    draw();
+  } catch (err) {
+    console.error(err);
   }
   const pick = (attr, apply) =>
     root.querySelectorAll(`[${attr}]`).forEach((b) =>
