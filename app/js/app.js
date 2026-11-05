@@ -13,6 +13,7 @@ import {
   sameTransaction,
   retirementPlan,
   planVsActual,
+  countedHistory,
   planGrowth,
   changedInputs,
   parseAccounts,
@@ -657,20 +658,13 @@ function vsPlan(diff) {
   return `<span class="${tone(diff)} num">${eur(Math.abs(diff))}</span> <span class="muted">${word}</span>`;
 }
 
-function investedLine(r, tracking) {
-  if (r.invested === null) return "";
-  return `<div class="meta">Invested <span class="num">${eur(r.invested)}</span> of <span class="num">${eur(r.planInvested)}</span> planned${r.partial ? ` (recorded from ${shortDate(tracking)})` : ""}</div>`;
-}
-
 /** Plan vs actual by month and by year for the counted portfolio. */
 function planVsActualCard(v) {
   const d = state.data;
-  const r = planVsActual(v, d.monthly, d.transactions, { live: countedValue(d.accounts, v.counted), today: todayIso() });
+  const series = d.history.length ? countedHistory(d.history, d.accounts, v.counted) : d.monthly;
+  const r = planVsActual(v, series, { live: countedValue(d.accounts, v.counted), today: todayIso() });
   const row = (x) => `
-        <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div>${investedLine(x, r.tracking)}</div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
-  const tracked = r.tracking
-    ? `New money (deposits minus withdrawals, plus III pillar contributions, without Rent cash) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
-    : "";
+        <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div></div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
   return `
     ${r.months.length ? `<section class="card">
       <h2>Growth vs plan by month</h2>
@@ -680,7 +674,7 @@ function planVsActualCard(v) {
     ${r.years.length ? `<section class="card">
       <h2>Growth vs plan by year</h2>
       <ul class="list">${r.years.map(row).join("")}</ul>
-      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Plan = the value at the start of the period growing at ${pct(r.rate)} a year, plus ${eur(v.monthly)} for each month in the period. A period runs from the last snapshot of the month before to this month's last snapshot, so older months (snapshotted around the 5th) cover mostly the month before, and a month with no snapshot is folded into the next one: 5 Jul – 5 Sep counts as two months, with twice the investment. ${tracked}</p>
+      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Plan = the value at the start of the period growing at ${pct(r.rate)} a year, plus ${eur(v.monthly)} for each month in the period. A month runs from the last snapshot of the month before to its own last snapshot, so older months (snapshotted around the 5th) cover mostly the month before, and a month with no snapshot is folded into the next one: 5 Jul – 5 Sep counts as two months, with twice the investment. A year runs from the snapshot closest to 31 December of the year before, so the current year is year to date.</p>
     </section>` : ""}`;
 }
 
