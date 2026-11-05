@@ -51,6 +51,7 @@ import {
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { ageChart, lineChart } from "./chart.js";
+import { decorate } from "./decorate.js";
 
 const RANGES = {
   accounts: "Accounts!A1:L300",
@@ -1585,6 +1586,7 @@ async function unlock() {
 // ---------- boot ----------
 
 function boot() {
+  decorate($("#view"), GROUP_COLORS);
   $("#tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-view]");
     if (b) go(b.dataset.view);
