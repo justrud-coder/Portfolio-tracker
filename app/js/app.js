@@ -41,7 +41,7 @@ import {
   rebalancePlan,
   targetsGrid,
   INCOME_HEADER,
-  INCOME_SOURCES,
+  incomeSources,
   incomeRow,
   parseIncome,
   savingsByMonth,
@@ -1025,16 +1025,39 @@ function renderSavings(root) {
   const s = savingsByMonth(d.transactions, d.income, today, 12);
   const recent = [...s.months].reverse();
   const latest = recent.find((m) => m.income > 0) ?? null;
-  const addIncome = `<button class="btn" id="addIncome">Add income</button>`;
+  const sources = incomeSources(d.income);
+  const lastSource = ls.get(SOURCE_KEY);
+  const incomeCard = `
+    <section class="card" id="incomeCard">
+      <h2>Add income</h2>
+      <form id="incomeForm" novalidate>
+        <label class="field">Date<input type="date" name="date" value="${today}" required></label>
+        <label class="field">Source
+          <select name="source">${sources.map((x) => `<option ${x === (lastSource ?? "Salary") ? "selected" : ""}>${esc(x)}</option>`).join("")}<option value="${NEW_SOURCE}">New source…</option></select>
+        </label>
+        <label class="field" data-for="newsource" hidden>Source name<input name="newSource" autocomplete="off" placeholder="e.g. Freelance"></label>
+        <label class="field">Net amount (€)<input name="amount" inputmode="decimal" autocomplete="off" placeholder="after tax"></label>
+        <label class="field">Note<input name="note" autocomplete="off"></label>
+        <div class="preview" id="incomePreview"></div>
+        <ul class="errors" id="incomeErrors"></ul>
+        <button class="btn" id="incomeSave">Save income</button>
+      </form>
+    </section>`;
+  const recentIncome = [...d.income].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 6);
+  const incomeList = recentIncome.length
+    ? `<section class="card"><h2>Recent income</h2><ul class="list">${recentIncome
+        .map((i) => `<li><div class="row"><div><div class="name">${esc(i.source || "Income")}</div><div class="meta">${shortDate(i.date)}${i.note ? ` · ${esc(i.note)}` : ""}</div></div><div class="right num">${eurCents(i.amount)}</div></div></li>`)
+        .join("")}</ul><p class="small muted" style="margin:0;padding:10px 0 14px">Edit or remove entries on the Income tab of the sheet.</p></section>`
+    : "";
 
   if (!d.income.length) {
     root.innerHTML = `
       <section class="card">
         <h2>Savings rate</h2>
-        <p>Your savings rate is the share of your income that goes into your accounts each month. Add your net pay (and any bonus or rent) under <strong>Transaction → Income</strong>, and it shows here next to what you deposited that month.</p>
-        ${addIncome}
-      </section>`;
-    $("#addIncome").onclick = goAddIncome;
+        <p>Your savings rate is the share of your income that goes into your accounts each month. Add your net income below (salary, options or anything else), and it shows here next to what you put into your accounts that month. Rent isn't counted.</p>
+      </section>
+      ${incomeCard}`;
+    wireIncomeForm();
     return;
   }
 
@@ -1071,11 +1094,13 @@ function renderSavings(root) {
           (m) => `<li><div class="row"><div><div class="name">${monthName(m.month)}</div><div class="meta num">Saved ${eur(m.saved)} · income ${m.income ? eur(m.income) : "none"}</div></div><div class="right num ${tone(m.rate ?? 0)}">${m.rate === null ? "–" : pct(m.rate)}</div></div></li>`,
         )
         .join("")}</ul>
-      <p class="small muted" style="margin:0;padding:10px 0 14px">Saved is what went into your accounts that month: deposits minus withdrawals (a move between two of your accounts cancels out) plus III pillar contributions. IBKR buys aren't added again, since they're paid from IBKR cash. A "New total" deposit that only adds interest counts as saved too.</p>
-      ${addIncome}
-    </section>`;
+      <p class="small muted" style="margin:0;padding:10px 0 14px">Saved is what went into your accounts that month: deposits minus withdrawals (a move between two of your accounts cancels out) plus III pillar contributions. IBKR buys aren't added again, since they're paid from IBKR cash. Rent is left out: rent income and the Rent cash account. A "New total" deposit that only adds interest counts as saved too.</p>
+    </section>
 
-  $("#addIncome").onclick = goAddIncome;
+    ${incomeCard}
+    ${incomeList}`;
+
+  wireIncomeForm();
   const pick = (i) => {
     const m = s.months[i];
     $("#ratePick").innerHTML = `${monthName(m.month)}: <span class="num">${pct(m.rate)}</span>, saved <span class="num">${eur(m.saved)}</span> of <span class="num">${eur(m.income)}</span>`;
@@ -1085,18 +1110,38 @@ function renderSavings(root) {
   root.querySelectorAll("#rateChart .hit").forEach((h) => h.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && pick(Number(h.dataset.i))));
 }
 
-function goAddIncome() {
-  const last = JSON.parse(ls.get("pt.lastTx") ?? "{}");
-  ls.set("pt.lastTx", JSON.stringify({ ...last, type: "INCOME" }));
-  go("add");
+const SOURCE_KEY = "pt.incomeSource";
+const NEW_SOURCE = "__new";
+
+/** The Add income form on the Savings tab: a new source shows a name field; the preview sums the month. */
+function wireIncomeForm() {
+  const form = $("#incomeForm");
+  const sync = () => {
+    const f = new FormData(form);
+    form.querySelector('[data-for="newsource"]').hidden = f.get("source") !== NEW_SOURCE;
+    const month = String(f.get("date") ?? "").slice(0, 7);
+    const had = state.data.income.filter((x) => x.date.slice(0, 7) === month && x.source.toLowerCase() !== "rent").reduce((sum, x) => sum + x.amount, 0);
+    const amount = num(String(f.get("amount") ?? "").replace(",", "."));
+    $("#incomePreview").textContent = /^\d{4}-\d{2}$/.test(month)
+      ? `Counts toward ${monthName(month)}${had ? `, which has ${eurCents(had)} already` : ""}${amount ? `: ${eurCents(had + amount)} in total` : ""}.`
+      : "";
+  };
+  form.addEventListener("input", sync);
+  form.addEventListener("change", sync);
+  sync();
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(form));
+    saveIncome({ ...f, source: f.source === NEW_SOURCE ? f.newSource : f.source });
+  };
 }
 
 /** Save an income row to the Income tab, making the tab first if the sheet has none. */
 async function saveIncome(f) {
   const { row, errors } = incomeRow(f);
-  $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
+  $("#incomeErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
   if (!row) return;
-  const btn = $("#txSave");
+  const btn = $("#incomeSave");
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
@@ -1114,14 +1159,14 @@ async function saveIncome(f) {
     }
     await sheets.ensureRows(tab, n);
     await sheets.write([{ range: `Income!A${n}:D${n}`, values: [row] }]);
-    ls.set("pt.lastTx", JSON.stringify({ type: "INCOME", source: row[1] }));
+    ls.set(SOURCE_KEY, row[1]);
     showBanner(`Saved ${esc(row[1].toLowerCase())} of ${eurCents(row[2])} for ${monthName(row[0].slice(0, 7))}.`, "ok");
     await load({ quiet: true });
   } catch (err) {
     if (err instanceof AuthError) needSignIn();
     else showBanner(esc(err.message || String(err)), "error");
     btn.disabled = false;
-    btn.textContent = "Save transaction";
+    btn.textContent = "Save income";
   }
 }
 
@@ -1135,7 +1180,6 @@ const TX_MODES = [
   ["PENSION", "III pillar"],
   ["OPTIONS", "Options"],
   ["REAL_ESTATE", "Real estate"],
-  ["INCOME", "Income"],
 ];
 const NEW_FUND = "__new";
 
@@ -1205,12 +1249,6 @@ function renderAdd(root) {
           </label>
           <label class="field">New value (€)<input name="propertyValue" inputmode="decimal" autocomplete="off"></label>
         </div>
-        <div class="two" data-for="income">
-          <label class="field">Source
-            <select name="source">${INCOME_SOURCES.map((x) => `<option ${x === (last.source ?? "Salary") ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
-          </label>
-          <label class="field">Net amount (€)<input name="amount" inputmode="decimal" autocomplete="off" placeholder="after tax"></label>
-        </div>
         <label class="field">Note<input name="note" autocomplete="off"></label>
         <div class="preview" id="txPreview"></div>
         <ul class="errors" id="txErrors"></ul>
@@ -1279,9 +1317,7 @@ function renderAdd(root) {
     form.querySelector('[data-for="trade"]').hidden = !trade;
     const opts = type === "OPTIONS";
     const estate = type === "REAL_ESTATE";
-    const income = type === "INCOME";
-    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate || income;
-    form.querySelector('[data-for="income"]').hidden = !income;
+    form.querySelector('[data-for="cash"]').hidden = trade || pension || opts || estate;
     form.querySelector('[data-for="realestate"]').hidden = !estate;
     form.querySelector('[data-for="pension"]').hidden = !pension;
     form.querySelector('[data-for="options"]').hidden = !opts;
@@ -1326,11 +1362,6 @@ function renderAdd(root) {
       const acct = properties.find((a) => a.name === f.get("property"));
       const value = num(String(f.get("propertyValue") ?? "").replace(",", "."));
       if (acct) msg = `Now ${eurCents(acct.value)}${value !== null ? `, ${eurCents(value)} after (${value >= acct.value ? "+" : "−"}${eurCents(Math.abs(value - acct.value))})` : ""}.`;
-    } else if (income) {
-      const month = String(f.get("date") ?? "").slice(0, 7);
-      const had = d.income.filter((x) => x.date.slice(0, 7) === month).reduce((sum, x) => sum + x.amount, 0);
-      const amount = num(String(f.get("amount") ?? "").replace(",", "."));
-      if (/^\d{4}-\d{2}$/.test(month)) msg = `Counts toward ${monthName(month)}${had ? `, which has ${eurCents(had)} already` : ""}${amount ? `: ${eurCents(had + amount)} in total` : ""}. Saved to the Income tab.`;
     } else if (opts && options) {
       const total = (options.units ?? 0) + (num(f.get("optionUnits")) ?? 0);
       const value = num(f.get("optionValue")) ?? options.price ?? 0;
@@ -1347,7 +1378,6 @@ function renderAdd(root) {
     const f = Object.fromEntries(new FormData(form));
     if (f.type === "OPTIONS") return saveOptionsForm(f, options);
     if (f.type === "REAL_ESTATE") return saveRealEstate(f);
-    if (f.type === "INCOME") return saveIncome(f);
     if (f.type === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
     if (f.type === "PENSION" && f.fund !== NEW_FUND && !String(f.pensionUnits ?? "").trim() && !String(f.pensionCash ?? "").trim())
       return savePensionValue(f, funds.find((h) => h.symbol === f.fund));
