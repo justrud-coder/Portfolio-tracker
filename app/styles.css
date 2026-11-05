@@ -224,11 +224,6 @@ main { padding: 0 20px 32px; max-width: 720px; margin: 0 auto; outline: none; }
 .chart .line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .chart .area { fill: var(--accent-wash); }
 .chart .dot { fill: var(--accent); stroke: var(--surface); stroke-width: 3; }
-.chart .bars .base { stroke: var(--border-strong); stroke-width: 1; }
-.chart .bars .bar { fill: var(--accent); opacity: 0.85; }
-.chart .bars .bar.neg { fill: var(--down); }
-.chart .bars .bar.on { opacity: 1; stroke: var(--text); stroke-width: 1.5; }
-.chart .bars .hit { fill: transparent; cursor: pointer; }
 .chart .cross { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 3 3; }
 .tip {
   position: absolute; top: -10px; transform: translateX(-50%);
