@@ -15,6 +15,7 @@ import {
   sameTransaction,
   retirementPlan,
   planVsActual,
+  planGrowth,
   changedInputs,
   parseAccounts,
   parseHistory,
@@ -307,11 +308,21 @@ function renderHome(root) {
 
   const changes = periodChanges(series, s.total, today);
   const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
+  // Plan vs actual: what the Goals plan (return before pension plus
+  // inflation, plus the monthly investment) expected over the same stretch.
+  const plan = d.retirement.found ? d.retirement.values : null;
+  const planLine = (c) => {
+    if (!plan || c.value === null || !c.from) return "";
+    const months = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${c.from}T00:00:00Z`)) / 86400000 / (365.25 / 12);
+    const expected = planGrowth(plan, s.total - c.value, months).total;
+    return `<div class="sub small">Plan <span class="num">${signedEur(expected)}</span> · ${vsPlan(c.value - expected)}</div>`;
+  };
   const changeTile = (label, c, fromWord, wide = false) => `
       <div class="card stat${wide ? " wide" : ""}">
         <div class="label">${label}</div>
         <div class="value">${c.value === null ? "–" : `<span class="${tone(c.value)} num">${signedEur(c.value)}</span>`}</div>
         <div class="sub">${c.from ? `<span class="${tone(c.value)} num">${signedPct(c.pct)}</span> <span class="muted">${fromWord} ${shortDate(c.from)}</span>` : `<span class="muted">No snapshot yet</span>`}</div>
+        ${planLine(c)}
       </div>`;
 
   root.innerHTML = `
@@ -616,43 +627,23 @@ function investedLine(r, tracking) {
   return `<div class="meta">Invested <span class="num">${eur(r.invested)}</span> of <span class="num">${eur(r.planInvested)}</span> planned${r.partial ? ` (recorded from ${shortDate(tracking)})` : ""}</div>`;
 }
 
-/** Plan vs actual: how much the counted portfolio should grow under the plan, and how much it did. */
+/** Plan vs actual by month and by year for the counted portfolio. */
 function planVsActualCard(v) {
   const d = state.data;
   const r = planVsActual(v, d.monthly, d.transactions, { live: countedValue(d.accounts, v.counted), today: todayIso() });
-  const last = r.months[0] ?? null;
-  const tile = (label, planned, actual, foot) => `
-      <div class="card stat">
-        <div class="label">${label}</div>
-        <div class="value num">${signedEur(planned.total)}</div>
-        <div class="sub muted">plan: <span class="num">${eur(planned.returns)}</span> return + <span class="num">${eur(planned.invested)}</span> invested</div>
-        ${actual ? `<div class="sub">Actual <span class="num ${tone(actual.actual)}">${signedEur(actual.actual)}</span> · ${vsPlan(actual.diff)}</div><div class="sub muted">${foot}</div>` : ""}
-      </div>`;
   const row = (x) => `
         <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div>${investedLine(x, r.tracking)}</div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
   const tracked = r.tracking
     ? `New money (deposits minus withdrawals, plus III pillar contributions, without Rent cash) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
-    : "Record deposits and withdrawals on the Add/remove asset tab to compare what you invest with the plan.";
+    : "";
   return `
-    <section class="card">
-      <h2>Plan vs actual</h2>
-      <p class="small muted" style="margin:0 0 14px">The plan grows ${esc(v.counted.toLowerCase())} (${eur(r.value)}) by <span class="num">${pct(r.rate)}</span> a year (${pct(v.returnPre)} real return plus ${pct(v.inflation)} inflation) and adds ${eur(v.monthly)} a month.</p>
-      <section class="stats" style="margin-bottom:0">
-        ${tile("Per month", r.perMonth, last, last ? `${shortDay(last.from)} – ${shortDate(last.to)}` : "")}
-        ${tile("Per year", r.perYear, r.last12, r.last12 ? `last 12 months, ${shortDate(r.last12.from)} – ${shortDate(r.last12.to)}` : "")}
-        <div class="card stat wide">
-          <div class="label">Monthly investment</div>
-          <div class="value num">${eur(v.monthly)}<span class="small muted">/mo plan</span></div>
-          <div class="sub">${last && last.invested !== null ? `Actual ${eur(last.invested)} in ${esc(periodName(last.period))}${last.partial ? " (recording started mid-month)" : ""}${r.last12 && r.last12.invested !== null ? ` · ${eur(r.last12.invested)} over the last 12 months of ${eur(r.last12.planInvested)}` : ""}` : `<span class="muted">No deposits recorded yet</span>`}</div>
-        </div>
-      </section>
-    </section>
     ${r.months.length ? `<section class="card">
-      <h2>By month</h2>
+      <h2>Growth vs plan by month</h2>
+      <p class="small muted" style="margin:0 0 6px">The plan grows ${esc(v.counted.toLowerCase())} by <span class="num">${pct(r.rate)}</span> a year (${pct(v.returnPre)} real return plus ${pct(v.inflation)} inflation) and adds ${eur(v.monthly)} a month.</p>
       <ul class="list">${r.months.slice(0, 12).map(row).join("")}</ul>
     </section>` : ""}
     ${r.years.length ? `<section class="card">
-      <h2>By year</h2>
+      <h2>Growth vs plan by year</h2>
       <ul class="list">${r.years.map(row).join("")}</ul>
       <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Each period runs from the last snapshot of the one before to its own last snapshot, so older months, which were snapshotted around the 5th, cover mostly the month before. The plan scales with the days in between. ${tracked}</p>
     </section>` : ""}`;
