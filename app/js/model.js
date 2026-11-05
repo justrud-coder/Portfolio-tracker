@@ -833,19 +833,23 @@ export function changedInputs(saved, values) {
 // ---------- rebalancing ----------
 
 /** Asset classes a target can be set for, in display order. */
-export const TARGET_CLASSES = ["Stocks", "Real estate", "Cash", "Pension"];
-
-/** Asset classes counted inside Stocks for rebalancing (Vinted options). */
-export const STOCK_LIKE = ["Options"];
+export const TARGET_CLASSES = ["Real estate", "Stocks", "Cash"];
 
 /**
- * Starting mix until targets are saved to the sheet. Options sit under
- * Stocks next to the IBKR ETFs; a deposit can't buy them, so they only
- * ever get sold to rebalance.
+ * Asset classes counted inside Stocks for rebalancing: Vinted options and
+ * the III pillar pension. `true` marks the ones a deposit can't buy.
+ */
+export const STOCK_LIKE_FIXED = { Options: true, Pension: false };
+export const STOCK_LIKE = Object.keys(STOCK_LIKE_FIXED);
+
+/**
+ * Starting mix until targets are saved to the sheet. Options and III pillar
+ * sit under Stocks next to the IBKR ETFs. A deposit can't buy options, so
+ * they only ever get sold to rebalance.
  */
 export const TARGET_DEFAULTS = {
-  classes: { Stocks: 0.6, "Real estate": 0.2, Cash: 0.1, Pension: 0.1 },
-  stocks: { "VWCE.DE": 0.5, "VHYL.AS": 0.1, "ISPA.DE": 0.1, VINTED: 0.3 },
+  classes: { "Real estate": 0.5, Stocks: 0.4, Cash: 0.1 },
+  stocks: { "VWCE.DE": 0.4, "VHYL.AS": 0.1, "ISPA.DE": 0.1, VINTED: 0.25, "ARTEA-AA16": 0.15 },
 };
 
 /** Shares as fractions: 70%, 0.7 and "70" all mean 70%. Blank is null. */
@@ -904,16 +908,16 @@ export function currentMix(accounts, holdings) {
         if (h.symbol === BROKER_CASH) add("Cash", h.value);
         else {
           add(a.assetClass, h.value);
-          stocks.push({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0, price: h.price });
+          stocks.push({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0, price: h.price, label: h.symbol });
         }
       }
     } else if (STOCK_LIKE.includes(a.assetClass)) {
-      // Options count as stocks, one item per holding (or the account).
+      // Options and III pillar count as stocks, one item per holding (or the account).
       const own = holdings.filter((x) => x.position === a.name && (x.units || x.value));
       const items = a.valuation === "holdings" && own.length ? own.map((h) => ({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0 })) : [{ key: a.name, name: a.name, value: a.value }];
       for (const i of items) {
         add("Stocks", i.value);
-        stocks.push({ ...i, price: null, fixed: true });
+        stocks.push({ ...i, price: null, fixed: STOCK_LIKE_FIXED[a.assetClass], label: GROUP_NAMES[a.assetClass] ?? i.name });
       }
     } else {
       add(a.assetClass, a.value);
@@ -998,7 +1002,7 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
   const stockT = normalize(targets.stocks);
   const known = new Map(mix.stocks.map((s) => [s.key, s]));
   const keys = [...new Set([...mix.stocks.map((s) => s.key), ...Object.keys(stockT).filter((k) => stockT[k] > 0)])];
-  const stockItems = keys.map((k) => ({ key: k, name: known.get(k)?.name ?? k, price: known.get(k)?.price ?? null, value: known.get(k)?.value ?? 0, target: stockT[k] ?? 0, fixed: !!known.get(k)?.fixed }));
+  const stockItems = keys.map((k) => ({ key: k, name: known.get(k)?.name ?? k, price: known.get(k)?.price ?? null, value: known.get(k)?.value ?? 0, target: stockT[k] ?? 0, fixed: !!known.get(k)?.fixed, label: known.get(k)?.label ?? k }));
   const stockBase = stockItems.reduce((s, i) => s + i.value, 0);
   const stockMoney = classMoves.Stocks ?? 0;
   const hasStockTargets = stockItems.some((i) => i.target > 0);
