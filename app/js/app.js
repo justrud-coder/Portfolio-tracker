@@ -810,10 +810,10 @@ function buyList(plan, sell) {
       for (const s of plan.stocks) {
         if (!(s.move > 0.5 || (sell && s.move < -0.5))) continue;
         const units = s.move > 0 ? (s.units ? `≈ ${s.units} unit${s.units === 1 ? "" : "s"} at ${eurCents(s.price)}` : s.price ? `less than 1 unit at ${eurCents(s.price)}` : "") : s.price ? `≈ ${Math.floor(-s.move / s.price)} units` : "";
-        lines.push({ name: s.key, meta: [s.name, units].filter(Boolean).join(" · "), move: s.move });
+        lines.push({ name: s.fixed ? s.name : s.key, meta: s.fixed ? "Sell vested options" : [s.name, units].filter(Boolean).join(" · "), move: s.move });
       }
     } else if (c.move > 0.5 || (sell && c.move < -0.5)) {
-      const where = { Stocks: "At IBKR", Cash: "Savings or a term deposit", Pension: "Artea, III pillar" }[c.key] ?? "";
+      const where = { Stocks: "At IBKR", Cash: "Savings or a term deposit", Pension: "Artea, III pillar", "Real estate": "Mortgage overpayment or property" }[c.key] ?? "";
       lines.push({ name: className(c.key), meta: where, move: c.move, out: c.key === "Cash" ? "Move out" : "Sell" });
     }
   }
@@ -826,7 +826,7 @@ function buyList(plan, sell) {
 
 function rebalanceResult(plan, sell) {
   const outside = plan.outside.length
-    ? `<p class="small muted" style="margin:12px 0 0">Not in the plan: ${plan.outside.map((o) => `${esc(className(o.key))} <span class="num">${eur(o.value)}</span>`).join(", ")}. A deposit can't buy these, so they're left out. Give one a target below to count it.</p>`
+    ? `<p class="small muted" style="margin:12px 0 0">Not in the plan: ${plan.outside.map((o) => `${esc(className(o.key))} <span class="num">${eur(o.value)}</span>`).join(", ")}. Give it a target below to count it.</p>`
     : "";
   const reach =
     !sell && plan.reachAll > 1
@@ -853,13 +853,13 @@ function rebalanceResult(plan, sell) {
     ${
       stockShown
         ? `<section class="card">
-      <div class="card-head"><h2>Stocks at IBKR</h2><span class="group-total num">${eur(plan.stocks.reduce((s, x) => s + x.value, 0))}</span></div>
+      <div class="card-head"><h2>Stocks and options</h2><span class="group-total num">${eur(plan.stocks.reduce((s, x) => s + x.value, 0))}</span></div>
       <ul class="mix">${mixRows(
-        plan.stocks.map((s) => ({ ...s, label: `${s.key}` })),
+        plan.stocks.map((s) => ({ ...s, label: s.fixed ? s.name : s.key })),
         () => GROUP_COLORS.Stocks,
         sell,
       )}</ul>
-      <p class="small muted" style="margin:12px 0 0">Shares are of the stocks total. ${sell ? "" : `The ${eur(plan.stockMoney)} for stocks is split so the most underweight ETF gets it first.`}</p>
+      <p class="small muted" style="margin:12px 0 0">Shares are of the stocks total. ${sell ? "" : `The ${eur(plan.stockMoney)} for stocks is split so the most underweight ETF gets it first.`} Options can't be bought, so they only get sold to rebalance.</p>
     </section>`
         : ""
     }`;
@@ -876,8 +876,9 @@ function renderRebalance(root) {
   const deposit = num(ls.get(DEPOSIT_KEY)) ?? fallback;
   const sell = ls.get("pt.rebalSell") === "1";
 
+  const stockName = (k) => (mix.stocks.find((x) => x.key === k && x.fixed)?.name ?? k);
   const input = (prefix, k, v) =>
-    `<label class="field">${esc(prefix === "c" ? className(k) : k)}<input name="${prefix}:${esc(k)}" inputmode="decimal" autocomplete="off" placeholder="–" value="${esc(pctText(v))}"><span class="unit">%</span></label>`;
+    `<label class="field">${esc(prefix === "c" ? className(k) : stockName(k))}<input name="${prefix}:${esc(k)}" inputmode="decimal" autocomplete="off" placeholder="–" value="${esc(pctText(v))}"><span class="unit">%</span></label>`;
 
   root.innerHTML = `
     <section class="card hero">
@@ -899,7 +900,7 @@ function renderRebalance(root) {
         <p class="small muted">By asset class. Leave a class blank to keep it out of the plan.</p>
         ${classKeys.map((k) => input("c", k, saved.classes[k])).join("")}
         <div class="total-line"><span>Total</span><span id="classSum" class="num"></span></div>
-        <p class="small muted" style="margin-top:14px">Stocks at IBKR, as shares of the stocks part.</p>
+        <p class="small muted" style="margin-top:14px">Within stocks: the IBKR ETFs and Vinted options, as shares of the stocks part.</p>
         ${stockKeys.map((k) => input("s", k, saved.stocks[k])).join("")}
         <div class="total-line"><span>Total</span><span id="stockSum" class="num"></span></div>
         <ul class="errors" id="targetErrors"></ul>

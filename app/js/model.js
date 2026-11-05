@@ -837,15 +837,19 @@ export function changedInputs(saved, values) {
 // ---------- rebalancing ----------
 
 /** Asset classes a target can be set for, in display order. */
-export const TARGET_CLASSES = ["Stocks", "Cash", "Pension", "Real estate", "Options"];
+export const TARGET_CLASSES = ["Stocks", "Real estate", "Cash", "Pension"];
+
+/** Asset classes counted inside Stocks for rebalancing (Vinted options). */
+export const STOCK_LIKE = ["Options"];
 
 /**
- * Starting mix until targets are saved to the sheet. Real estate and options
- * are left out: a deposit can't buy them, so they aren't part of the plan.
+ * Starting mix until targets are saved to the sheet. Options sit under
+ * Stocks next to the IBKR ETFs; a deposit can't buy them, so they only
+ * ever get sold to rebalance.
  */
 export const TARGET_DEFAULTS = {
-  classes: { Stocks: 0.7, Cash: 0.2, Pension: 0.1 },
-  stocks: { "VWCE.DE": 0.7, "VHYL.AS": 0.15, "ISPA.DE": 0.15 },
+  classes: { Stocks: 0.6, "Real estate": 0.2, Cash: 0.1, Pension: 0.1 },
+  stocks: { "VWCE.DE": 0.5, "VHYL.AS": 0.1, "ISPA.DE": 0.1, VINTED: 0.3 },
 };
 
 /** Shares as fractions: 70%, 0.7 and "70" all mean 70%. Blank is null. */
@@ -870,7 +874,9 @@ export function parseTargets(grid) {
     const name = text(row, c.name);
     const t = share(cell(row, c.target));
     if (!name || !t || t < 0) continue;
-    if (level === "class") out.classes[name] = t;
+    if (level === "class") {
+      if (!STOCK_LIKE.includes(name)) out.classes[name] = t;
+    }
     else if (level === "stocks" || level === "stock") out.stocks[name.toUpperCase()] = t;
   }
   return out;
@@ -905,6 +911,14 @@ export function currentMix(accounts, holdings) {
           stocks.push({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0, price: h.price });
         }
       }
+    } else if (STOCK_LIKE.includes(a.assetClass)) {
+      // Options count as stocks, one item per holding (or the account).
+      const own = holdings.filter((x) => x.position === a.name && (x.units || x.value));
+      const items = a.valuation === "holdings" && own.length ? own.map((h) => ({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0 })) : [{ key: a.name, name: a.name, value: a.value }];
+      for (const i of items) {
+        add("Stocks", i.value);
+        stocks.push({ ...i, price: null, fixed: true });
+      }
     } else {
       add(a.assetClass, a.value);
     }
@@ -920,7 +934,7 @@ export function currentMix(accounts, holdings) {
  */
 export function buyOnly(items, amount) {
   const out = Object.fromEntries(items.map((i) => [i.key, 0]));
-  const live = items.filter((i) => i.target > 0);
+  const live = items.filter((i) => i.target > 0 && !i.fixed);
   if (!(amount > 0) || !live.length) return out;
   // Find the level L with sum(max(0, target*L - value)) = amount.
   const sorted = [...live].sort((a, b) => a.value / a.target - b.value / b.target);
@@ -941,7 +955,19 @@ export function buyOnly(items, amount) {
 /** Buys (positive) and sells (negative) that put the items exactly on target. */
 export function fullRebalance(items, amount) {
   const total = items.reduce((s, i) => s + i.value, 0) + amount;
-  return Object.fromEntries(items.map((i) => [i.key, (i.target || 0) * total - i.value]));
+  const out = Object.fromEntries(items.map((i) => [i.key, (i.target || 0) * total - i.value]));
+  // Items that can't be bought (options) and sit below target stay as they
+  // are; the rest are rebalanced over what's left.
+  const stuck = items.filter((i) => i.fixed && out[i.key] > 0);
+  if (!stuck.length) return out;
+  const rest = items.filter((i) => !stuck.includes(i));
+  const tSum = rest.reduce((s, i) => s + (i.target || 0), 0);
+  const sub = fullRebalance(
+    rest.map((i) => ({ ...i, target: tSum ? (i.target || 0) / tSum : 0 })),
+    amount,
+  );
+  for (const i of stuck) sub[i.key] = 0;
+  return sub;
 }
 
 const normalize = (map) => {
@@ -976,7 +1002,7 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
   const stockT = normalize(targets.stocks);
   const known = new Map(mix.stocks.map((s) => [s.key, s]));
   const keys = [...new Set([...mix.stocks.map((s) => s.key), ...Object.keys(stockT).filter((k) => stockT[k] > 0)])];
-  const stockItems = keys.map((k) => ({ key: k, name: known.get(k)?.name ?? k, price: known.get(k)?.price ?? null, value: known.get(k)?.value ?? 0, target: stockT[k] ?? 0 }));
+  const stockItems = keys.map((k) => ({ key: k, name: known.get(k)?.name ?? k, price: known.get(k)?.price ?? null, value: known.get(k)?.value ?? 0, target: stockT[k] ?? 0, fixed: !!known.get(k)?.fixed }));
   const stockBase = stockItems.reduce((s, i) => s + i.value, 0);
   const stockMoney = classMoves.Stocks ?? 0;
   const hasStockTargets = stockItems.some((i) => i.target > 0);
