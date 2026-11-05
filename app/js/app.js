@@ -679,7 +679,7 @@ function planVsActualCard(v) {
     ${r.years.length ? `<section class="card">
       <h2>Growth vs plan by year</h2>
       <ul class="list">${r.years.map(row).join("")}</ul>
-      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Each period runs from the last snapshot of the one before to its own last snapshot, so older months, which were snapshotted around the 5th, cover mostly the month before. The plan scales with the days in between. ${tracked}</p>
+      <p class="small muted" style="margin:0;padding:10px 16px 14px 0">Plan = the value at the start of the period growing at ${pct(r.rate)} a year, plus ${eur(v.monthly)} for each month in the period. A period runs from the last snapshot of the month before to this month's last snapshot, so older months (snapshotted around the 5th) cover mostly the month before, and a month with no snapshot is folded into the next one: 5 Jul – 5 Sep counts as two months, with twice the investment. ${tracked}</p>
     </section>` : ""}`;
 }
 

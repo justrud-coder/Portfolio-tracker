@@ -12,6 +12,10 @@ test("planGrowth: one year at 5% real + 3% inflation grows the value by 8.15%", 
   const m = planGrowth(PLAN, 100000, 1);
   near(m.total, 100000 * (1.0815 ** (1 / 12) - 1) + 3000);
   assert.equal(m.invested, 3000);
+  // Two months: €3,000 a month plus the start value's growth, nothing more.
+  const two = planGrowth(PLAN, 100000, 2);
+  near(two.total, 100000 * (1.0815 ** (2 / 12) - 1) + 6000);
+  near(two.returns, 100000 * (1.0815 ** (2 / 12) - 1));
 });
 
 test("countedSnapshot follows the plan's Portfolio counted setting", () => {
