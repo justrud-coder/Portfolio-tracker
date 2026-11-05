@@ -636,7 +636,7 @@ function planVsActualCard(v) {
   const row = (x) => `
         <li><div class="row"><div><div class="name">${esc(periodName(x.period))}</div><div class="meta">${shortDay(x.from)} – ${shortDate(x.to)} · plan <span class="num">${signedEur(x.plan)}</span></div>${investedLine(x, r.tracking)}</div><div class="right"><div class="num ${tone(x.actual)}">${signedEur(x.actual)}</div><div class="small">${vsPlan(x.diff)}</div></div></div></li>`;
   const tracked = r.tracking
-    ? `New money (deposits minus withdrawals, plus III pillar contributions) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
+    ? `New money (deposits minus withdrawals, plus III pillar contributions, without Rent cash) is counted from the Transactions tab, recorded since ${shortDate(r.tracking)}.`
     : "Record deposits and withdrawals on the Transaction tab to compare what you invest with the plan.";
   return `
     <section class="card">

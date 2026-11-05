@@ -24,7 +24,7 @@ test("countedSnapshot follows the plan's Portfolio counted setting", () => {
 const TX = [
   ["", "IBKR", "BUY", "VWCE.DE", 10, 100, "", "", "Starting position"],
   ["2026-06-30", "III pillar", "BUY", "ARTEA", 1000, 0.7, "", "", "Starting position at the unit price"],
-  ["2026-11-04", "Rent cash", "DEPOSIT", "", "", "", "", 650, ""],
+  ["2026-11-04", "Cash", "DEPOSIT", "", "", "", "", 650, ""],
   ["2026-11-10", "IBKR", "WITHDRAWAL", "CASH", "", "", "", 100, ""],
   ["2026-11-12", "III pillar", "BUY", "ARTEA", 500, 0.7, "", "", ""],
   ["2026-11-13", "IBKR", "BUY", "VWCE.DE", 2, 120, "", "", ""],
