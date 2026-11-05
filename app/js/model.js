@@ -817,6 +817,7 @@ export function retirementByAge(p, counted) {
       portfolioFuture: portfolio * toFuture,
       neededFuture: needed * toFuture,
       spend: spendFrom(p, portfolio, age),
+      spendFuture: spendFrom(p, portfolio, age) * toFuture,
       canRetire: portfolio >= needed,
     });
   }

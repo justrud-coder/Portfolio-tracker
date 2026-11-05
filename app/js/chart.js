@@ -211,3 +211,111 @@ export function lineChart(host, points, { label = "Total", stack = null } = {}) 
   hit.addEventListener("pointerleave", (e) => e.pointerType === "mouse" && hide());
   document.addEventListener("pointerdown", (e) => !host.contains(e.target) && hide(), { capture: true });
 }
+
+/**
+ * Retire-at-each-age chart: what you'd have against what you'd need at each
+ * age, in the euros of that year, with the goal and earliest ages marked.
+ * rows: [{age, have, need, spend, year}], spend is the monthly spend it pays
+ * in the euros of that year.
+ */
+export function ageChart(host, rows, { goal, earliest } = {}) {
+  host.replaceChildren();
+  if (rows.length < 2) return;
+  const W = Math.max(280, host.clientWidth || 320);
+  const H = 220;
+  const m = { t: 16, r: 10, b: 26, l: 48 };
+  const iw = W - m.l - m.r;
+  const ih = H - m.t - m.b;
+  const a0 = rows[0].age;
+  const a1 = rows[rows.length - 1].age;
+  const ticks = niceTicks(0, Math.max(...rows.map((r) => Math.max(r.have, r.need))));
+  const y1 = ticks[ticks.length - 1];
+  const x = (a) => m.l + ((a - a0) / (a1 - a0 || 1)) * iw;
+  const y = (v) => m.t + ih - (v / (y1 || 1)) * ih;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": "Portfolio you'd have and amount needed, by retirement age" });
+
+  for (const t of ticks) {
+    svg.append(el("line", { x1: m.l, x2: W - m.r, y1: y(t), y2: y(t), class: "grid" }));
+    const lbl = el("text", { x: m.l - 6, y: y(t) + 4, class: "axis", "text-anchor": "end" });
+    lbl.textContent = compactEur(t);
+    svg.append(lbl);
+  }
+  const step = Math.max(1, Math.ceil((a1 - a0) / 6));
+  for (let a = a0; a <= a1; a += step) {
+    const lbl = el("text", { x: x(a), y: H - 6, class: "axis", "text-anchor": a === a0 ? "start" : "middle" });
+    lbl.textContent = String(a);
+    svg.append(lbl);
+  }
+
+  for (const [age, cls] of [[goal, "mark goal"], [earliest, "mark earliest"]]) {
+    if (age === null || age === undefined || age < a0 || age > a1) continue;
+    svg.append(el("line", { x1: x(age), x2: x(age), y1: m.t, y2: m.t + ih, class: cls }));
+  }
+
+  const path = (key) => rows.map((r, i) => `${i ? "L" : "M"}${x(r.age).toFixed(1)},${y(r[key]).toFixed(1)}`).join("");
+  const base = y(0);
+  svg.append(el("path", { d: `${path("have")}L${x(a1)},${base}L${x(a0)},${base}Z`, class: "area" }));
+  svg.append(el("path", { d: path("need"), class: "line need" }));
+  svg.append(el("path", { d: path("have"), class: "line" }));
+  const pick = rows.find((r) => r.age === earliest);
+  if (pick) svg.append(el("circle", { cx: x(pick.age), cy: y(pick.have), r: 4.5, class: "dot" }));
+
+  const cross = el("line", { y1: m.t, y2: m.t + ih, class: "cross", visibility: "hidden" });
+  const dotHave = el("circle", { r: 5, class: "dot", visibility: "hidden" });
+  const dotNeed = el("circle", { r: 4, class: "dot need", visibility: "hidden" });
+  svg.append(cross, dotNeed, dotHave);
+  const hit = el("rect", { x: m.l, y: 0, width: iw, height: H, fill: "transparent" });
+  svg.append(hit);
+
+  const tip = html("div", "tip tip-card");
+  tip.hidden = true;
+  const legend = html("ul", "chart-legend");
+  for (const [name, cls] of [["You'd have", "have"], ["You'd need", "need"]]) {
+    const li = html("li");
+    li.append(html("span", `swatch ${cls}`), html("span", "", name));
+    legend.append(li);
+  }
+  host.append(svg, tip, legend);
+
+  const show = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((clientX - r.left) / r.width) * W;
+    const row = rows.reduce((b, q) => (Math.abs(x(q.age) - px) < Math.abs(x(b.age) - px) ? q : b));
+    const bx = x(row.age);
+    for (const [n, v] of [[cross, null], [dotHave, row.have], [dotNeed, row.need]]) {
+      n.setAttribute("visibility", "visible");
+      if (n === cross) {
+        n.setAttribute("x1", bx);
+        n.setAttribute("x2", bx);
+      } else {
+        n.setAttribute("cx", bx);
+        n.setAttribute("cy", y(v));
+      }
+    }
+    const status = row.have >= row.need ? "Enough" : `${eur(row.need - row.have)} short`;
+    tip.replaceChildren(html("span", "muted", `Retire at ${row.age} (${row.year})`), html("strong", "", `${eur(row.spend)}/mo`));
+    const list = html("ul");
+    for (const [cls, name, v] of [["have", "Have", eur(row.have)], ["need", "Need", eur(row.need)], ["", "", status]]) {
+      const li = html("li");
+      const key = html("span", `key ${cls}`);
+      li.append(key, html("span", "name", name), html("span", "amt", v));
+      list.append(li);
+    }
+    tip.append(list);
+    const left = (bx / W) * r.width;
+    tip.style.left = left > r.width / 2 ? "0px" : "auto";
+    tip.style.right = left > r.width / 2 ? "auto" : "0px";
+    tip.hidden = false;
+  };
+  const hide = () => {
+    for (const n of [cross, dotHave, dotNeed]) n.setAttribute("visibility", "hidden");
+    tip.hidden = true;
+  };
+  hit.addEventListener("pointermove", (e) => show(e.clientX));
+  hit.addEventListener("pointerdown", (e) => show(e.clientX));
+  hit.addEventListener("pointerleave", (e) => e.pointerType === "mouse" && hide());
+  // Redrawn on every input change, so keep only one outside-tap listener.
+  if (ageChart.outside) document.removeEventListener("pointerdown", ageChart.outside, { capture: true });
+  ageChart.outside = (e) => !host.contains(e.target) && hide();
+  document.addEventListener("pointerdown", ageChart.outside, { capture: true });
+}

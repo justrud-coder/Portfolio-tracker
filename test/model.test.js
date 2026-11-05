@@ -265,6 +265,8 @@ test("retirementByAge matches the Retirement tab table", () => {
   assert.equal(Math.round(at(53).portfolio), 802999);
   assert.equal(plan.earliestAge, 53);
   assert.equal(plan.byAge.at(-1).age, 84);
+  // Monthly spend in the euros of the retirement year.
+  assert.ok(Math.abs(at(53).spendFuture - at(53).spend * 1.03 ** 10) < 1e-6);
 });
 
 test("sameTransaction compares columns A to I only", async () => {
