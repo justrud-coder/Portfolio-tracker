@@ -100,12 +100,8 @@ test("transactionRow builds IBKR trades, cash moves and III pillar units", () =>
   const ibkr = transactionRow({ date: "2026-11-04", account: "IBKR", type: "WITHDRAWAL", cash: "250" });
   assert.deepEqual(ibkr.row, ["2026-11-04", "IBKR", "WITHDRAWAL", "CASH", "", "", "", 250, ""]);
 
-  const pen = transactionRow({ date: "2026-11-04", type: "PENSION", fund: "ARTEA-AA16", units: "142.17", cash: "100" });
-  assert.deepEqual(pen.row, ["2026-11-04", "III pillar", "BUY", "ARTEA-AA16", 142.17, 0.703383, "", "", ""]);
-
-  const opt = transactionRow({ date: "2026-12-01", type: "OPTIONS", symbol: "VINTED", units: "40" });
-  assert.deepEqual(opt.row, ["2026-12-01", "Vinted options", "BUY", "VINTED", 40, "", "", "", ""]);
-  assert.equal(transactionRow({ date: "2026-12-01", type: "OPTIONS", symbol: "VINTED", units: "" }).row, undefined);
+  // III pillar and options are saved as a total value, not as transactions.
+  assert.equal(transactionRow({ date: "2026-11-04", type: "PENSION", fund: "ARTEA-AA16", units: "142.17", cash: "100" }).row, undefined);
 
   assert.ok(transactionRow({ date: "2026-11-04", type: "BUY", symbol: "cash", units: "1", price: "1" }).errors.some((e) => /Deposit/.test(e)));
   assert.equal(transactionRow({ date: "2026-11-04", type: "DIVIDEND", cash: "5" }).row, undefined);
@@ -501,18 +497,10 @@ test("transaction picker: class and action", async () => {
   assert.deepEqual(m.txStart({}), { cls: "stocks", mode: "BUY" });
   assert.deepEqual(m.txStart({ type: "WITHDRAWAL" }), { cls: "cash", mode: "WITHDRAWAL" });
   assert.deepEqual(m.txStart({ type: "PENSION" }), { cls: "pension", mode: "PENSION_VALUE" });
+  assert.deepEqual(m.txStart({ mode: "PENSION_NEW" }), { cls: "pension", mode: "PENSION_VALUE" });
   assert.deepEqual(m.txStart({ type: "REAL_ESTATE" }), { cls: "estate", mode: "ESTATE_UP" });
   assert.deepEqual(m.txStart({ mode: "ESTATE_DOWN" }), { cls: "estate", mode: "ESTATE_DOWN" });
   assert.deepEqual(m.txStart({ type: "NOPE" }), { cls: "stocks", mode: "BUY" });
-});
-
-test("unit price for a new total value", async () => {
-  const m = await import("../app/js/model.js");
-  assert.equal(m.unitPriceForTotal(1500, 1000), 1.5);
-  assert.equal(m.unitPriceForTotal(0, 10), 0);
-  assert.equal(m.unitPriceForTotal(1500, 0), null);
-  assert.equal(m.unitPriceForTotal(null, 10), null);
-  assert.equal(m.unitPriceForTotal(-1, 10), null);
 });
 
 test("real estate increase and decrease", async () => {
@@ -526,7 +514,6 @@ test("editKind and unitsToTarget pick how an Overview row is edited", async () =
   assert.equal(editKind({ kind: "account", account: "Deposit" }), "value");
   assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "CASH", source: "manual", units: 0 } }), "cash");
   assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "VWCE.DE", source: "yahoo", price: 100, units: 3 } }), "units");
-  assert.equal(editKind({ kind: "holding", account: "III pillar", holding: { symbol: "AA16", source: "manual", price: 1, units: 5 } }), "total");
   assert.equal(editKind({ kind: "holding", account: "III pillar", holding: { symbol: "X", source: "manual", units: 0 } }), null);
   assert.equal(editKind({ kind: "holding", account: "IBKR", holding: { symbol: "EXSG.DE", source: "yahoo", price: null, units: 200 } }), "units");
   assert.deepEqual(unitsToTarget(179, 181), { type: "BUY", units: 2 });
