@@ -46,6 +46,7 @@ test("parseTargets reads percents and falls back to defaults", () => {
     ["Class", "Stocks", 0.6],
     ["Class", "Cash", "30%"],
     ["Class", "Real estate", ""],
+    ["Class", "Options", 0.2],
     ["Class", "Pension", 10],
     ["Stocks", "vwce.de", 1],
   ]);
@@ -55,7 +56,7 @@ test("parseTargets reads percents and falls back to defaults", () => {
 test("targetsGrid round-trips through parseTargets", () => {
   const grid = targetsGrid(TARGET_DEFAULTS, ["VWCE.DE", "NEW.DE"]);
   assert.equal(grid.length, 30);
-  assert.deepEqual(grid[1], ["Class", "Stocks", "70%"]);
+  assert.deepEqual(grid[1], ["Class", "Stocks", "60%"]);
   assert.ok(grid.some((r) => r[1] === "NEW.DE" && r[2] === ""));
   const back = parseTargets(grid.map((r) => r.map((v) => (typeof v === "string" && v.endsWith("%") ? v : v))));
   assert.deepEqual(back.classes, TARGET_DEFAULTS.classes);
@@ -77,26 +78,41 @@ const holdings = parseHoldings([
   ["IBKR", "VHYL.AS", "High Div", 80, "yahoo", 83.6, "EUR", "", "", "", 6689],
   ["IBKR", "ISPA.DE", "Select Div", 200, "yahoo", 40.8, "EUR", "", "", "", 8167],
   ["IBKR", "CASH", "Cash", 500, "fixed", 1, "EUR", "", "", "", 500],
+  ["Vinted options", "VINTED", "Vinted share options", 855, "manual", 70.72, "EUR", "", "", "", 60466],
 ]);
 
-test("currentMix counts IBKR cash as cash and lists the stocks", () => {
+test("currentMix counts IBKR cash as cash and options as stocks", () => {
   const mix = currentMix(accounts, holdings);
-  assert.deepEqual(mix.classes, { Stocks: 45261, Cash: 61922, Pension: 13198, Options: 60466, "Real estate": 47347 });
-  assert.deepEqual(mix.stocks.map((s) => s.key), ["VWCE.DE", "VHYL.AS", "ISPA.DE"]);
+  assert.deepEqual(mix.classes, { Stocks: 45261 + 60466, Cash: 61922, Pension: 13198, "Real estate": 47347 });
+  assert.deepEqual(mix.stocks.map((s) => s.key), ["VWCE.DE", "VHYL.AS", "ISPA.DE", "VINTED"]);
+  assert.equal(mix.stocks.find((s) => s.key === "VINTED").fixed, true);
 });
 
-test("rebalancePlan sends a deposit to stocks, split by ETF, with units", () => {
-  const plan = rebalancePlan(currentMix(accounts, holdings), TARGET_DEFAULTS, 1000);
-  assert.deepEqual(plan.outside.map((o) => o.key).sort(), ["Options", "Real estate"]);
+test("buyOnly never buys a fixed item, fullRebalance only sells one", () => {
+  const items = [
+    { key: "A", value: 0, target: 0.5 },
+    { key: "O", value: 0, target: 0.5, fixed: true },
+  ];
+  assert.deepEqual(buyOnly(items, 100), { A: 100, O: 0 });
+  assert.deepEqual(fullRebalance(items, 100), { A: 100, O: 0 });
+  assert.deepEqual(fullRebalance([{ key: "A", value: 0, target: 0.5 }, { key: "O", value: 100, target: 0.5, fixed: true }], 0), { A: 50, O: -50 });
+});
+
+test("rebalancePlan includes real estate and splits stocks without buying options", () => {
+  // Big enough to reach stocks after the most underweight class (pension).
+  const plan = rebalancePlan(currentMix(accounts, holdings), TARGET_DEFAULTS, 30000);
+  assert.deepEqual(plan.outside, []);
   const by = Object.fromEntries(plan.classes.map((c) => [c.key, c]));
   assert.equal(by.Cash.move, 0);
-  close(by.Stocks.move + by.Pension.move, 1000);
+  close(Object.values(by).reduce((s, c) => s + c.move, 0), 30000);
+  assert.ok(by.Stocks.move > 0);
+  assert.equal(plan.stocks.find((s) => s.key === "VINTED").move, 0);
   close(plan.stockMoney, by.Stocks.move);
   close(plan.stocks.reduce((s, x) => s + x.move, 0), plan.stockMoney);
   const vwce = plan.stocks.find((s) => s.key === "VWCE.DE");
+  assert.ok(vwce.move > 0);
   assert.equal(vwce.units, Math.floor(vwce.move / 169.86));
-  // Cash at ~52% of 120k against 20%: about 190k more before nothing is overweight.
-  close(plan.reachAll, 61922 / 0.2 - plan.base, 1);
+  close(plan.reachAll, Math.max(...plan.classes.map((c) => c.value / c.target)) - plan.base, 1);
 });
 
 test("rebalancePlan with selling lands every class on target", () => {
