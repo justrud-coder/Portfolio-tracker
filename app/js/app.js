@@ -46,6 +46,8 @@ import {
   txStart,
   unitPriceForTotal,
   changedValue,
+  editKind,
+  unitsToTarget,
 } from "./model.js";
 import { esc, eur, eurCents, pct, shortDate, signedEur, signedPct, todayIso, tone } from "./format.js";
 import { ageChart, lineChart } from "./chart.js";
@@ -308,6 +310,7 @@ function renderHome(root) {
 
   const changes = periodChanges(series, s.total, today);
   const groups = overviewGroups(d.accounts, d.holdings, d.transactions, d.history, today);
+  const editable = groups.flatMap((g) => g.items);
   // Plan vs actual: what the Goals plan (return before pension plus
   // inflation, plus the monthly investment) expected over the same stretch.
   const plan = d.retirement.found ? d.retirement.values : null;
@@ -365,7 +368,7 @@ function renderHome(root) {
         (g) => `
     <section class="card">
       <div class="card-head"><h2>${esc(g.name)}</h2><span class="group-total num">${eur(g.total)}</span></div>
-      <ul class="list">${groupItems(g.items)}</ul>
+      <ul class="list">${groupItems(g.items, editable)}</ul>
     </section>`,
       )
       .join("")}
@@ -384,6 +387,13 @@ function renderHome(root) {
       diff === null ? "" : `<span class="${tone(diff)} num">${signedEur(diff)}${first.value ? ` (${signedPct(diff / first.value)})` : ""}</span> <span class="muted">since ${shortDate(first.date)}</span>`;
   };
   draw();
+  for (const form of root.querySelectorAll("form.edit-row")) {
+    const item = editable[Number(form.dataset.i)];
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      saveRowEdit(form, item);
+    };
+  }
   const pick = (attr, apply) =>
     root.querySelectorAll(`[${attr}]`).forEach((b) =>
       b.addEventListener("click", () => {
@@ -454,8 +464,19 @@ function donut(items) {
     </div>`;
 }
 
-/** Rows of an overview group: stocks and funds from holdings, and manual accounts. */
-function groupItems(items) {
+const EDIT_LABELS = { value: "Value (€)", cash: "Balance (€)", units: "Units", total: "Total value (€)" };
+const EDIT_HINTS = {
+  value: "Saved as today's snapshot.",
+  cash: "Saved as a deposit or withdrawal of the difference.",
+  units: "Saved as a buy or sell of the difference at the latest price.",
+  total: "The units stay; the price per unit is updated.",
+};
+
+/**
+ * Rows of an overview group: stocks and funds from holdings, and manual
+ * accounts. Tapping a row opens a field to change its value in place.
+ */
+function groupItems(items, all = items) {
   return items
     .map((i) => {
       const c = i.change;
@@ -469,7 +490,17 @@ function groupItems(items) {
       } else {
         meta = i.updated ? `as of ${shortDate(i.updated)}` : "no snapshot";
       }
-      return `<li><div class="row"><div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div></div><div class="right"><div class="num">${eur(i.value)}</div>${gain}</div></div></li>`;
+      const body = `<div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div></div><div class="right"><div class="num">${eur(i.value)}</div>${gain}</div>`;
+      const kind = editKind(i);
+      if (!kind) return `<li><div class="row">${body}</div></li>`;
+      const start = kind === "units" ? num(i.holding.units) : Math.round((i.value ?? 0) * 100) / 100;
+      return `<li><details class="edit"><summary class="row">${body}</summary>
+        <form class="edit-row" data-i="${all.indexOf(i)}" novalidate>
+          <label class="field">${EDIT_LABELS[kind]}<input name="v" inputmode="decimal" autocomplete="off" value="${esc(String(start))}"></label>
+          <p class="small muted">${EDIT_HINTS[kind]}</p>
+          <ul class="errors"></ul>
+          <button class="btn small" type="submit">Save</button>
+        </form></details></li>`;
     })
     .join("");
 }
@@ -1229,6 +1260,68 @@ function renderAdd(root) {
       btn.textContent = "Save";
     }
   };
+}
+
+/** Save a value changed in place on the Overview (see editKind). */
+async function saveRowEdit(form, item) {
+  const kind = editKind(item);
+  const target = decimal(form.elements.v.value);
+  const errs = form.querySelector(".errors");
+  errs.innerHTML = target === null || target < 0 ? `<li>Enter a number, 0 or more.</li>` : "";
+  if (errs.innerHTML) return;
+  const btn = form.querySelector("button");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  const date = todayIso();
+  const note = "Edited in the app";
+  try {
+    let msg;
+    if (kind === "value") {
+      const value = Math.round(target * 100) / 100;
+      const [grid] = await sheets.batchGet([RANGES.history]);
+      const plan = planSnapshot(date, [{ account: item.account, value, note }], parseHistory(grid), nextFreeRow(grid));
+      const tab = (await freshMeta()).tabs.History;
+      if (!tab) throw new Error("The sheet has no History tab.");
+      await sheets.ensureRows(tab, plan.lastRow);
+      await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
+      msg = `Saved ${esc(item.name)} at ${eurCents(value)}.`;
+    } else {
+      // Re-read Holdings so the change is worked out from the sheet as it is now.
+      const [grid] = await sheets.batchGet([RANGES.holdings]);
+      const h = parseHoldings(grid).find((x) => x.position === item.account && x.symbol === item.holding.symbol);
+      if (!h) throw new Error(`${item.name} isn't on the Holdings tab any more. Refresh and try again.`);
+      if (kind === "cash") {
+        const move = moveToTotal(h.value ?? 0, target);
+        if (move) {
+          const { row, errors } = transactionRow({ type: move.type, account: BROKER, cash: move.amount, date, note });
+          if (!row) throw new Error(errors.join(" "));
+          await saveTransaction(row);
+        }
+        msg = move ? `Saved a ${move.type.toLowerCase()} of ${eurCents(move.amount)}: IBKR cash is now ${eurCents(target)}.` : `IBKR cash is already ${eurCents(target)}. Nothing saved.`;
+      } else if (kind === "units") {
+        if (!(h.price > 0)) throw new Error(`${item.name} has no price yet, so the buy or sell can't be valued. Try again once prices update.`);
+        const move = unitsToTarget(h.units, target);
+        if (move) {
+          const { row, errors } = transactionRow({ type: move.type, symbol: h.symbol, units: move.units, price: h.price, date, note });
+          if (!row) throw new Error(errors.join(" "));
+          await saveTransaction(row);
+        }
+        msg = move ? `Saved a ${move.type.toLowerCase()} of ${move.units} ${esc(h.symbol)}: you now hold ${target}.` : `${esc(item.name)} is already ${target} units. Nothing saved.`;
+      } else {
+        const price = unitPriceForTotal(target, h.units);
+        if (price === null) throw new Error(`${item.name} has no units on the Holdings tab, so there's nothing to value.`);
+        await sheets.write([{ range: `Holdings!F${h.row}`, values: [[price]] }, { range: `Holdings!H${h.row}`, values: [[date]] }]);
+        msg = `Saved ${esc(item.name)} at ${eurCents(target)}.`;
+      }
+    }
+    showBanner(msg, "ok");
+    await load({ quiet: true });
+  } catch (err) {
+    if (err instanceof AuthError) needSignIn();
+    else errs.innerHTML = `<li>${esc(err.message || String(err))}</li>`;
+    btn.disabled = false;
+    btn.textContent = "Save";
+  }
 }
 
 async function freshMeta() {

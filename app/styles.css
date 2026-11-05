@@ -301,6 +301,11 @@ details > summary.row::after {
 }
 details[open] > summary.row::after { transform: rotate(45deg); margin-top: -7px; }
 details > summary.row:active { opacity: 0.6; }
+details.edit > summary.row { padding-right: 0; }
+details.edit > summary.row::after { display: none; }
+.edit-row { padding: 0 0 14px; }
+.edit-row label.field { border-top: 1px solid var(--sep); }
+.edit-row p { margin: 6px 0 10px; }
 .sublist {
   list-style: none; margin: 0 0 14px; padding: 4px 14px;
   background: var(--surface-2); border-radius: var(--radius-sm);
