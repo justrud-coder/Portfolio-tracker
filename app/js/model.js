@@ -509,9 +509,9 @@ export const TX_TYPES = ["BUY", "SELL", "DEPOSIT", "WITHDRAWAL"];
 /** Account that holds stocks and IBKR cash, and the symbol of that cash. */
 export const BROKER = "IBKR";
 export const BROKER_CASH = "CASH";
-/** Account that holds the III pillar pension funds. */
+/** III pillar pension account, kept as one total value. */
 export const PENSION = "III pillar";
-/** Account that holds the Vinted share options (units x value per option). */
+/** Vinted share options account, kept as one total value. */
 export const OPTIONS = "Vinted options";
 
 /**
@@ -521,9 +521,6 @@ export const OPTIONS = "Vinted options";
  * Types:
  * - BUY / SELL: stocks at IBKR (paid from / paid into IBKR cash on the sheet).
  * - DEPOSIT / WITHDRAWAL: a cash account, or IBKR cash (account "IBKR").
- * - PENSION: units bought in a III pillar fund, written as a BUY in "III pillar"
- *   with the unit price worked out from the amount paid.
- * - OPTIONS: Vinted options received, written as a BUY with no cost.
  */
 export function transactionRow(t) {
   const errors = [];
@@ -545,18 +542,6 @@ export function transactionRow(t) {
     if (!t.account) errors.push("Pick an account.");
     if (!(cash > 0)) errors.push("Amount must be more than 0.");
     row = [t.date, t.account, type, t.account === BROKER ? BROKER_CASH : "", "", "", "", cash, note];
-  } else if (type === "PENSION") {
-    const fund = String(t.fund ?? "").trim();
-    if (!fund) errors.push("Pick a fund, or enter the new fund's name.");
-    if (!(units > 0)) errors.push("Units must be more than 0.");
-    if (!(cash > 0)) errors.push("Total value must be more than 0.");
-    const unitPrice = units > 0 && cash > 0 ? Math.round((cash / units) * 1e6) / 1e6 : "";
-    row = [t.date, PENSION, "BUY", fund, units, unitPrice, "", "", note];
-  } else if (type === "OPTIONS") {
-    const symbol = String(t.symbol ?? "").trim();
-    if (!symbol) errors.push("The sheet has no Vinted options position on the Holdings tab.");
-    if (!(units > 0)) errors.push("Options received must be more than 0.");
-    row = [t.date, OPTIONS, "BUY", symbol, units, "", "", "", note];
   } else {
     errors.push("Pick a type.");
   }
@@ -841,6 +826,8 @@ export const TARGET_CLASSES = ["Real estate", "Stocks", "Cash"];
  */
 export const STOCK_LIKE_FIXED = { Options: true, Pension: false };
 export const STOCK_LIKE = Object.keys(STOCK_LIKE_FIXED);
+/** Target keys for Vinted options and III pillar, now kept as one total value each (as their symbols were). */
+const STOCK_LIKE_KEYS = { "Vinted options": "VINTED", "III pillar": "ARTEA-AA16" };
 
 /**
  * Starting mix until targets are saved to the sheet. Options and III pillar
@@ -914,7 +901,7 @@ export function currentMix(accounts, holdings) {
     } else if (STOCK_LIKE.includes(a.assetClass)) {
       // Options and III pillar count as stocks, one item per holding (or the account).
       const own = holdings.filter((x) => x.position === a.name && (x.units || x.value));
-      const items = a.valuation === "holdings" && own.length ? own.map((h) => ({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0 })) : [{ key: a.name, name: a.name, value: a.value }];
+      const items = a.valuation === "holdings" && own.length ? own.map((h) => ({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0 })) : [{ key: STOCK_LIKE_KEYS[a.name] ?? a.name.toUpperCase(), name: a.name, value: a.value }];
       for (const i of items) {
         add("Stocks", i.value);
         stocks.push({ ...i, price: null, fixed: STOCK_LIKE_FIXED[a.assetClass], label: GROUP_NAMES[a.assetClass] ?? i.name });
@@ -1284,27 +1271,18 @@ export function planVsActual(p, monthly, transactions = [], { live = null, today
 export const TX_CLASSES = [
   { id: "stocks", label: "Stocks", actions: [["BUY", "Buy"], ["SELL", "Sell"]] },
   { id: "cash", label: "Cash", actions: [["DEPOSIT", "Add"], ["WITHDRAWAL", "Remove"]] },
-  { id: "pension", label: "III pillar", actions: [["PENSION_VALUE", "Current funds"], ["PENSION_NEW", "Add new fund"]] },
+  { id: "pension", label: "III pillar", actions: [["PENSION_VALUE", "New total value"]] },
   { id: "options", label: "Options", actions: [["OPTIONS_VALUE", "New total value"]] },
   { id: "estate", label: "Real estate", actions: [["ESTATE_UP", "Increase"], ["ESTATE_DOWN", "Decrease"]] },
 ];
 
 /** Class and mode to open the form on, from what was saved last (older saves used a single type). */
 export function txStart(last = {}) {
-  const legacy = { PENSION: "PENSION_VALUE", OPTIONS: "OPTIONS_VALUE", REAL_ESTATE: "ESTATE_UP" };
+  const legacy = { PENSION: "PENSION_VALUE", PENSION_NEW: "PENSION_VALUE", OPTIONS: "OPTIONS_VALUE", REAL_ESTATE: "ESTATE_UP" };
+  if (legacy[last.mode]) last = { ...last, mode: legacy[last.mode] };
   const mode = legacy[last.type] ?? last.mode ?? last.type;
   for (const c of TX_CLASSES) if (c.actions.some(([m]) => m === mode)) return { cls: c.id, mode };
   return { cls: "stocks", mode: "BUY" };
-}
-
-/**
- * Price per unit that makes a position worth `total` with `units` held.
- * Null when there are no units to spread the value over.
- */
-export function unitPriceForTotal(total, units) {
-  const u = num(units);
-  if (!(u > 0) || total === null || !Number.isFinite(total) || total < 0) return null;
-  return total / u;
 }
 
 /**
@@ -1312,7 +1290,6 @@ export function unitPriceForTotal(total, units) {
  * - "value": a manual account; the new value is saved as today's History snapshot.
  * - "cash": IBKR cash; a deposit or withdrawal reaches the new balance.
  * - "units": an IBKR stock; a buy or sell at its latest price reaches the new units.
- * - "total": a fund or options priced by hand; the price per unit becomes total / units.
  * Null when the row can't be edited.
  */
 export function editKind(item) {
@@ -1321,7 +1298,6 @@ export function editKind(item) {
   if (!h) return null;
   if (item.account === BROKER && h.symbol === BROKER_CASH) return "cash";
   if (item.account === BROKER) return "units";
-  if (h.units > 0) return "total";
   return null;
 }
 

@@ -6,9 +6,6 @@ import {
   BROKER_CASH,
   PENSION,
   OPTIONS,
-  fundSymbol,
-  holdingsRow,
-  nextHoldingsRow,
   countedValue,
   nextFreeRow,
   parseRetirement,
@@ -44,7 +41,6 @@ import {
   markInterest,
   TX_CLASSES,
   txStart,
-  unitPriceForTotal,
   changedValue,
   editKind,
   unitsToTarget,
@@ -464,12 +460,11 @@ function donut(items) {
     </div>`;
 }
 
-const EDIT_LABELS = { value: "Value (€)", cash: "Balance (€)", units: "Units", total: "Total value (€)" };
+const EDIT_LABELS = { value: "Value (€)", cash: "Balance (€)", units: "Units" };
 const EDIT_HINTS = {
   value: "Saved as today's snapshot.",
   cash: "Saved as a deposit or withdrawal of the difference.",
   units: "Saved as a buy or sell of the difference at the latest price.",
-  total: "The units stay; the price per unit is updated.",
 };
 
 /**
@@ -1010,8 +1005,8 @@ function renderAdd(root) {
   ];
   const stocks = d.holdings.filter((h) => h.position === BROKER && h.symbol !== BROKER_CASH);
   const brokerCash = d.holdings.find((h) => h.position === BROKER && h.symbol === BROKER_CASH);
-  const funds = d.holdings.filter((h) => h.position === PENSION);
-  const options = d.holdings.find((h) => h.position === OPTIONS);
+  // III pillar and Vinted options are kept as one total value each, like real estate.
+  const totals = { PENSION_VALUE: d.accounts.find((a) => a.name === PENSION), OPTIONS_VALUE: d.accounts.find((a) => a.name === OPTIONS) };
   const properties = d.accounts.filter((a) => a.active && a.assetClass === "Real estate");
   let last = {};
   try {
@@ -1060,15 +1055,6 @@ function renderAdd(root) {
           </div>
           <label class="field"><span id="cashLabel">Amount (€)</span><input name="cash" inputmode="decimal" autocomplete="off"></label>
           <label class="field" data-for="interest">Interest, not new savings<input type="checkbox" name="interest" value="1" class="check"></label>
-        </div>
-        <div class="two" data-for="fund">
-          <label class="field">Fund
-            <select name="fund">${funds.map((h) => `<option value="${esc(h.symbol)}" ${h.symbol === last.fund ? "selected" : ""}>${esc(h.name || h.symbol)}</option>`).join("")}</select>
-          </label>
-        </div>
-        <div class="two" data-for="newfund">
-          <label class="field">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
-          <label class="field">Total value (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
         </div>
         <div class="two" data-for="total">
           <label class="field">New total value (€)<input name="totalValue" inputmode="decimal" autocomplete="off"></label>
@@ -1154,7 +1140,6 @@ function renderAdd(root) {
   const show = (key, on) => {
     for (const el of form.querySelectorAll(`[data-for="${key}"]`)) el.hidden = !on;
   };
-  const unit = (x) => `${x.toLocaleString("en-IE", { maximumFractionDigits: 6 })} €`;
   const sync = () => {
     const { f, cls, mode } = current();
     for (const el of form.querySelectorAll("[data-actions]")) {
@@ -1167,8 +1152,6 @@ function renderAdd(root) {
     show("cash", cls === "cash");
     show("cashmode", mode === "DEPOSIT");
     show("interest", mode === "DEPOSIT");
-    show("fund", mode === "PENSION_VALUE");
-    show("newfund", mode === "PENSION_NEW");
     show("total", mode === "PENSION_VALUE" || mode === "OPTIONS_VALUE");
     show("estate", cls === "estate");
     show("change", cls === "estate");
@@ -1194,19 +1177,13 @@ function renderAdd(root) {
       } else {
         msg = `Now ${eurCents(now)}${amount ? `, ${eurCents(mode === "DEPOSIT" ? now + amount : now - amount)} after` : ""}.`;
       }
-    } else if (mode === "PENSION_VALUE" || mode === "OPTIONS_VALUE") {
-      const pos = mode === "OPTIONS_VALUE" ? options : funds.find((h) => h.symbol === f.get("fund"));
+    } else if (totals[mode] !== undefined) {
+      const acct = totals[mode];
       const total = decimal(f.get("totalValue"));
-      if (!pos) msg = mode === "OPTIONS_VALUE" ? "The sheet has no Vinted options position on the Holdings tab." : "No III pillar funds yet. Add a new fund first.";
-      else {
-        const price = unitPriceForTotal(total, pos.units);
-        msg = `Now ${eurCents(pos.value ?? 0)}${
-          price !== null ? `, ${eurCents(total)} after (${total >= pos.value ? "+" : "−"}${eurCents(Math.abs(total - pos.value))}). ${num(pos.units.toFixed(4))} units at ${unit(price)}.` : "."
-        }`;
-      }
-    } else if (mode === "PENSION_NEW") {
-      const total = decimal(f.get("pensionCash"));
-      if (total > 0) msg = `Adds the fund at ${eurCents(total)}. Later, update it under Current funds with its new total value.`;
+      const now = acct?.value ?? 0;
+      msg = !acct
+        ? `The sheet has no ${mode === "OPTIONS_VALUE" ? OPTIONS : PENSION} account.`
+        : `Now ${eurCents(now)}${total !== null ? `, ${eurCents(total)} after (${total >= now ? "+" : "−"}${eurCents(Math.abs(total - now))})` : ""}.`;
     } else if (cls === "estate") {
       const acct = properties.find((a) => a.name === f.get("property"));
       const amount = decimal(f.get("change"));
@@ -1224,33 +1201,19 @@ function renderAdd(root) {
     const f = Object.fromEntries(new FormData(form));
     // Interest grows the balance but isn't new money: the note keeps it out of plan vs actual.
     if (mode === "DEPOSIT" && f.interest) f.note = markInterest(f.note);
-    if (mode === "OPTIONS_VALUE") return savePositionTotal(f, OPTIONS, options, "OPTIONS_VALUE");
-    if (mode === "PENSION_VALUE") return savePositionTotal(f, PENSION, funds.find((h) => h.symbol === f.fund), "PENSION_VALUE");
+    if (totals[mode] !== undefined) return saveAccountTotal(f, mode === "OPTIONS_VALUE" ? OPTIONS : PENSION, mode);
     if (cls === "estate") return saveRealEstate(f, mode === "ESTATE_UP");
     if (mode === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
-    const pension = mode === "PENSION_NEW";
-    // A new fund is kept as 1 unit priced at its total value, so a later
-    // new total under Current funds simply becomes its price.
-    const input = pension ? { ...f, type: "PENSION", fund: f.fundName, units: 1, cash: decimal(f.pensionCash) } : { ...f, type: mode };
-    const { row, errors } = transactionRow(input);
-    if (pension && !String(f.fundName ?? "").trim()) errors.unshift("Enter the fund's name.");
+    const { row, errors } = transactionRow({ ...f, type: mode });
     $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
     if (!row || errors.length) return;
     const btn = $("#txSave");
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      let what;
-      if (pension) {
-        const fund = await savePension(row, String(f.fundName).trim());
-        what = `${esc(fund.name)} at ${eurCents(row[5])}`;
-        // Next time, open on the fund just made.
-        ls.set("pt.lastTx", JSON.stringify({ mode: "PENSION_VALUE", fund: fund.symbol }));
-      } else {
-        await saveTransaction(row);
-        what = `${esc(row[2].toLowerCase())}${row[3] && row[3] !== BROKER_CASH ? ` ${esc(row[3])}` : ""} on ${esc(row[1] === BROKER && row[3] === BROKER_CASH ? "IBKR cash" : row[1])}`;
-        ls.set("pt.lastTx", JSON.stringify({ mode, account: f.account }));
-      }
+      await saveTransaction(row);
+      const what = `${esc(row[2].toLowerCase())}${row[3] && row[3] !== BROKER_CASH ? ` ${esc(row[3])}` : ""} on ${esc(row[1] === BROKER && row[3] === BROKER_CASH ? "IBKR cash" : row[1])}`;
+      ls.set("pt.lastTx", JSON.stringify({ mode, account: f.account }));
       showBanner(`Saved ${what}.`, "ok");
       await load({ quiet: true });
     } catch (err) {
@@ -1298,7 +1261,7 @@ async function saveRowEdit(form, item) {
           await saveTransaction(row);
         }
         msg = move ? `Saved a ${move.type.toLowerCase()} of ${eurCents(move.amount)}: IBKR cash is now ${eurCents(target)}.` : `IBKR cash is already ${eurCents(target)}. Nothing saved.`;
-      } else if (kind === "units") {
+      } else {
         if (!(h.price > 0)) throw new Error(`${item.name} has no price yet, so the buy or sell can't be valued. Try again once prices update.`);
         const move = unitsToTarget(h.units, target);
         if (move) {
@@ -1307,11 +1270,6 @@ async function saveRowEdit(form, item) {
           await saveTransaction(row);
         }
         msg = move ? `Saved a ${move.type.toLowerCase()} of ${move.units} ${esc(h.symbol)}: you now hold ${target}.` : `${esc(item.name)} is already ${target} units. Nothing saved.`;
-      } else {
-        const price = unitPriceForTotal(target, h.units);
-        if (price === null) throw new Error(`${item.name} has no units on the Holdings tab, so there's nothing to value.`);
-        await sheets.write([{ range: `Holdings!F${h.row}`, values: [[price]] }, { range: `Holdings!H${h.row}`, values: [[date]] }]);
-        msg = `Saved ${esc(item.name)} at ${eurCents(target)}.`;
       }
     }
     showBanner(msg, "ok");
@@ -1338,40 +1296,6 @@ async function saveTransaction(row) {
   if (!tab) throw new Error("The sheet has no Transactions tab.");
   await sheets.ensureRows(tab, n);
   await sheets.write([{ range: `Transactions!A${n}:I${n}`, values: [row] }]);
-}
-
-/**
- * Save III pillar units. A new fund gets its own Holdings row first. The unit
- * price paid becomes the fund's latest price unless a newer one is already set.
- */
-async function savePension(row, newFundName, unitValue = null) {
-  const [holdings] = await sheets.batchGet([RANGES.holdings]);
-  const meta = await freshMeta();
-  const date = row[0];
-  // A unit value typed in wins over the price worked out from the amount paid.
-  const price = unitValue ?? row[5];
-  let fund;
-  if (newFundName) {
-    const tab = meta.tabs.Holdings;
-    if (!tab) throw new Error("The sheet has no Holdings tab.");
-    const symbol = fundSymbol(newFundName, holdings.slice(1).map((r) => r?.[1] ?? ""));
-    const r = nextHoldingsRow(holdings);
-    await sheets.ensureRows(tab, r);
-    const values = holdingsRow(r, { position: PENSION, symbol, name: newFundName, price, priceDate: date });
-    await sheets.write([{ range: `Holdings!A${r}:M${r}`, values: [values] }]);
-    fund = { symbol, name: newFundName };
-  } else {
-    const i = holdings.findIndex((r, k) => k > 0 && r?.[0] === PENSION && r?.[1] === row[3]);
-    if (i < 0) throw new Error(`The fund ${row[3]} isn't on the Holdings tab any more. Refresh and try again.`);
-    const r = i + 1;
-    fund = { symbol: row[3], name: holdings[i][2] || row[3] };
-    const known = serialToIso(holdings[i][7]);
-    if (!known || date >= known) {
-      await sheets.write([{ range: `Holdings!F${r}`, values: [[price]] }, { range: `Holdings!H${r}`, values: [[date]] }]);
-    }
-  }
-  await saveTransaction([...row.slice(0, 3), fund.symbol, ...row.slice(4)]);
-  return fund;
 }
 
 /**
@@ -1418,31 +1342,31 @@ async function saveRealEstate(f, up) {
 }
 
 /**
- * III pillar fund or options: overwrite the position's total value. The units
- * stay as they are and the price per unit becomes total / units.
+ * III pillar or Vinted options: save the new total value as a History
+ * snapshot dated on the form's date. The account's value then starts from it.
  */
-async function savePositionTotal(f, position, pos, mode) {
-  const total = num(String(f.totalValue ?? "").replace(",", "."));
+async function saveAccountTotal(f, account, mode) {
+  const total = decimal(f.totalValue);
   const errors = [];
-  if (!pos) errors.push(position === OPTIONS ? "The sheet has no Vinted options position on the Holdings tab." : "Pick a fund.");
   if (total === null || total < 0) errors.push("Enter the new total value, 0 or more.");
-  else if (pos && unitPriceForTotal(total, pos.units) === null) errors.push(`${esc(pos.name || pos.symbol)} has no units on the Holdings tab, so there's nothing to value.`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date ?? "")) errors.push("Pick a date.");
+  if (f.date > todayIso()) errors.push("The date can't be in the future.");
   $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
   if (errors.length) return;
   const btn = $("#txSave");
   btn.disabled = true;
   btn.textContent = "Saving…";
   try {
-    // Re-read so the right Holdings row and the latest units are used even if rows moved.
-    const [grid] = await sheets.batchGet([RANGES.holdings]);
-    const fresh = parseHoldings(grid).find((h) => h.position === position && h.symbol === pos.symbol);
-    if (!fresh) throw new Error(`${pos.name || pos.symbol} isn't on the Holdings tab any more. Refresh and try again.`);
-    const price = unitPriceForTotal(total, fresh.units);
-    if (price === null) throw new Error(`${pos.name || pos.symbol} has no units on the Holdings tab.`);
-    await sheets.write([{ range: `Holdings!F${fresh.row}`, values: [[price]] }, { range: `Holdings!H${fresh.row}`, values: [[f.date]] }]);
-    ls.set("pt.lastTx", JSON.stringify({ mode, fund: position === PENSION ? pos.symbol : undefined }));
-    showBanner(`Saved ${esc(pos.name || pos.symbol)} at ${eurCents(total)}.`, "ok");
+    const [grid] = await sheets.batchGet([RANGES.history]);
+    const value = Math.round(total * 100) / 100;
+    const note = String(f.note ?? "").trim() || "Set in the app";
+    const plan = planSnapshot(f.date, [{ account, value, note }], parseHistory(grid), nextFreeRow(grid));
+    const tab = (await freshMeta()).tabs.History;
+    if (!tab) throw new Error("The sheet has no History tab.");
+    await sheets.ensureRows(tab, plan.lastRow);
+    await sheets.write(plan.updates.map((u) => ({ range: `History!A${u.row}:D${u.row}`, values: [u.values] })));
+    ls.set("pt.lastTx", JSON.stringify({ mode }));
+    showBanner(`Saved ${esc(account)} at ${eurCents(value)}.`, "ok");
     await load({ quiet: true });
   } catch (err) {
     if (err instanceof AuthError) needSignIn();
