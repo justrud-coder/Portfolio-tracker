@@ -547,7 +547,7 @@ function retireSummary(v, plan) {
   return {
     hero: `
     <section class="card hero">
-      <div class="label">Retire at ${esc(v.retireAge)} on ${eur(v.spend)}/month</div>
+      <div class="label">Retire at ${esc(v.retireAge)}, spending ${eur(v.spend)}/month in today's money (${eur(v.spend * (1 + v.inflation) ** plan.years)} in ${thisYear() + plan.years})</div>
       <div class="value ${t}">${esc(plan.status)}</div>
       <div class="sub">Need <span class="num">${eur(plan.neededFuture)}</span> at ${esc(v.retireAge)}. Investing ${eur(v.monthly)}/month gets you to <span class="num">${eur(plan.projectedFuture)}</span>.</div>
       <div class="sub muted">In ${retireYear(plan)} euros.</div>
@@ -569,7 +569,7 @@ function retireSummary(v, plan) {
       <div class="card stat wide">
         <div class="label">Earliest you can retire</div>
         <div class="value num">${plan.earliestAge === null ? `Not before ${esc(v.endAge)}` : `Age ${plan.earliestAge}`}</div>
-        <div class="sub muted">on ${eur(v.spend)}/month, investing ${eur(v.monthly)}/month until then</div>
+        <div class="sub muted">spending ${eur(v.spend)}/month in today's money, investing ${eur(v.monthly)}/month until then</div>
       </div>
       <div class="card stat wide">
         <div class="label">At your current pace</div>
