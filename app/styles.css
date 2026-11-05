@@ -471,7 +471,7 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
 .privacy #privacy .eye-closed { display: inline; }
 .privacy .num, .privacy .chart, .privacy .donut svg, .privacy .figs dd, .privacy .meta, .privacy .preview,
 .privacy .banner, .privacy .total-line, .privacy .stat .value, .privacy .stat .sub,
-.privacy input:not([type="radio"]):not([type="date"]) {
+.privacy input:not([type="radio"]):not([type="date"]):not([type="checkbox"]) {
   filter: blur(9px); transition: filter 0.2s;
 }
 .privacy .num, .privacy .chart { user-select: none; pointer-events: none; }
@@ -502,3 +502,5 @@ code { background: var(--fill); padding: 2px 6px; border-radius: 6px; font-size:
 .age-picks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; font-size: 15px; }
 .age-picks li { display: flex; justify-content: space-between; gap: 8px; }
 .age-picks .num { font-weight: 600; }
+
+.field input.check { -webkit-appearance: auto; appearance: auto; width: 22px; padding: 0; border: 0; background: none; height: 22px; flex: none; accent-color: var(--accent); margin: 0; }

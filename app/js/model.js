@@ -1073,12 +1073,20 @@ export function incomeRow(t) {
  * between two of your own accounts nets to zero); III pillar buys add what was
  * paid. IBKR buys and sells are left out because they are paid from and into
  * IBKR cash, whose deposits already count. Option grants cost nothing, and
- * starting positions aren't savings.
+ * starting positions aren't savings, and neither is interest (a note that
+ * starts with "Interest").
  */
+/** A Transactions note that marks a deposit as interest (or other returns), not new money. */
+export const isInterest = (note) => /^interest\b/i.test(String(note ?? "").trim());
+export const markInterest = (note) => {
+  const n = String(note ?? "").trim();
+  return isInterest(n) ? n : n ? `Interest · ${n}` : "Interest";
+};
+
 export function savedBy(cells) {
   const [date, account, type, , units, price, fees, cash, note] = cells ?? [];
   if (!serialToIso(date) || /^starting position/i.test(String(note ?? "").trim())) return null;
-  if (norm(account) === norm(RENT_ACCOUNT)) return null;
+  if (norm(account) === norm(RENT_ACCOUNT) || isInterest(note)) return null;
   if (type === "DEPOSIT") return num(cash) ?? 0;
   if (type === "WITHDRAWAL") return -(num(cash) ?? 0);
   if (account === PENSION && (type === "BUY" || type === "SELL")) {
