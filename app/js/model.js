@@ -214,6 +214,74 @@ export function parseHistory(grid) {
   return out;
 }
 
+/** Chart series name for an account's asset class. */
+export const seriesName = (assetClass) => assetClass || "Other";
+
+/**
+ * Total value on every History date, split by asset class:
+ * [{date, total, parts: {Stocks: 1234, ...}}], oldest first.
+ *
+ * Each date is summed from its own rows, like the Monthly tab. A date with
+ * only a few rows (a real estate value saved from the app between snapshots)
+ * isn't a full snapshot: the accounts it leaves out keep their value from the
+ * last full one, so the total doesn't dip. A date counts as full when it has
+ * at least half as many accounts as the last full date.
+ */
+export function historySeries(history, accounts) {
+  const classOf = new Map(accounts.map((a) => [a.name, a.assetClass]));
+  const byDate = new Map();
+  for (const h of history) {
+    if (!h.date || !h.account) continue;
+    if (!byDate.has(h.date)) byDate.set(h.date, new Map());
+    byDate.get(h.date).set(h.account, h.value ?? 0);
+  }
+  const out = [];
+  let full = null; // Map account -> value of the last full snapshot
+  for (const date of [...byDate.keys()].sort()) {
+    const rows = byDate.get(date);
+    let values = rows;
+    if (full && rows.size < full.size / 2) values = new Map([...full, ...rows]);
+    else full = rows;
+    const parts = {};
+    let total = 0;
+    for (const [account, value] of values) {
+      const name = seriesName(classOf.get(account));
+      parts[name] = (parts[name] ?? 0) + value;
+      total += value;
+    }
+    out.push({ date, total, parts });
+  }
+  return out;
+}
+
+/** Today's live point for the series: active accounts' current values by class. */
+export function livePoint(accounts, date) {
+  const parts = {};
+  let total = 0;
+  for (const a of accounts.filter((x) => x.active)) {
+    const name = seriesName(a.assetClass);
+    parts[name] = (parts[name] ?? 0) + a.value;
+    total += a.value;
+  }
+  return { date, total, parts };
+}
+
+/**
+ * Points from `range` ("1m", "1y", "3y" or "all") before the last point. When
+ * that leaves fewer than two, the snapshot before the start is kept too, so
+ * the line still has somewhere to start from.
+ */
+export function pointsInRange(points, range) {
+  if (range === "all" || !points.length) return points;
+  const months = { "1m": 1, "1y": 12, "3y": 36 }[range] ?? 0;
+  if (!months) return points;
+  const from = addMonths(points[points.length - 1].date, -months);
+  let start = points.findIndex((p) => p.date >= from);
+  if (start < 0) start = points.length - 1;
+  if (start > 0 && points.length - start < 2) start -= 1;
+  return points.slice(start);
+}
+
 /** 1-based row after the last row that has anything in it (header counts). */
 export function nextFreeRow(grid) {
   let last = 0;
@@ -749,6 +817,7 @@ export function retirementByAge(p, counted) {
       portfolioFuture: portfolio * toFuture,
       neededFuture: needed * toFuture,
       spend: spendFrom(p, portfolio, age),
+      spendFuture: spendFrom(p, portfolio, age) * toFuture,
       canRetire: portfolio >= needed,
     });
   }
@@ -930,6 +999,85 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
   return { base, deposit, classes, outside, stocks, stockMoney, hasStockTargets, reachAll };
 }
 
+// ---------- savings rate ----------
+
+/** Income tab: Date | Source | Amount (EUR) | Note. */
+export const INCOME_HEADER = ["Date", "Source", "Amount (EUR)", "Note"];
+export const INCOME_SOURCES = ["Salary", "Bonus", "Rent", "Other"];
+
+/** Income tab rows with a date and an amount, with their 1-based sheet row. */
+export function parseIncome(grid) {
+  const c = columns(grid?.[0], { date: "Date", source: "Source", amount: "Amount", note: "Note" });
+  const out = [];
+  for (let r = 1; r < (grid?.length ?? 0); r++) {
+    const row = grid[r];
+    const date = serialToIso(cell(row, c.date));
+    const amount = num(cell(row, c.amount));
+    if (!date || amount === null) continue;
+    out.push({ row: r + 1, date, source: text(row, c.source), amount, note: text(row, c.note) });
+  }
+  return out;
+}
+
+/** Validate an income form and return the Income row (A:D). */
+export function incomeRow(t) {
+  const errors = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
+  const amount = num(String(t.amount ?? "").replace(",", "."));
+  if (!(amount > 0)) errors.push("Amount must be more than 0.");
+  const source = String(t.source ?? "").trim() || "Salary";
+  if (errors.length) return { errors };
+  return { errors, row: [t.date, source, amount, String(t.note ?? "").trim()] };
+}
+
+/**
+ * New money a Transactions row puts into the portfolio, or null when it moves
+ * nothing in from outside. Deposits add and withdrawals take away (a transfer
+ * between two of your own accounts nets to zero); III pillar buys add what was
+ * paid. IBKR buys and sells are left out because they are paid from and into
+ * IBKR cash, whose deposits already count. Option grants cost nothing, and
+ * starting positions aren't savings.
+ */
+export function savedBy(cells) {
+  const [date, account, type, , units, price, fees, cash, note] = cells ?? [];
+  if (!serialToIso(date) || /^starting position/i.test(String(note ?? "").trim())) return null;
+  if (type === "DEPOSIT") return num(cash) ?? 0;
+  if (type === "WITHDRAWAL") return -(num(cash) ?? 0);
+  if (account === PENSION && (type === "BUY" || type === "SELL")) {
+    const v = (num(units) ?? 0) * (num(price) ?? 0) + (num(fees) ?? 0);
+    return type === "BUY" ? v : -v;
+  }
+  return null;
+}
+
+/**
+ * Savings rate per calendar month, oldest first, for the `count` months up to
+ * and including `today`'s month: income, money saved, and saved / income
+ * (null without income). `average` is the rate over the months with income.
+ */
+export function savingsByMonth(transactions, income, today, count = 12) {
+  const end = today.slice(0, 7);
+  const months = [];
+  for (let i = count - 1; i >= 0; i--) months.push(addMonths(`${end}-01`, -i).slice(0, 7));
+  const by = new Map(months.map((m) => [m, { month: m, income: 0, saved: 0, rate: null }]));
+  for (const i of income) by.get(i.date.slice(0, 7)) && (by.get(i.date.slice(0, 7)).income += i.amount);
+  for (const t of transactions) {
+    const cells = t.cells ?? t;
+    const v = savedBy(cells);
+    const m = by.get(serialToIso(cells[0]).slice(0, 7));
+    if (v !== null && m) m.saved += v;
+  }
+  const list = [...by.values()];
+  for (const m of list) {
+    m.saved = Math.round(m.saved * 100) / 100;
+    m.rate = m.income > 0 ? m.saved / m.income : null;
+  }
+  const withIncome = list.filter((m) => m.income > 0);
+  const inc = withIncome.reduce((s, m) => s + m.income, 0);
+  const saved = withIncome.reduce((s, m) => s + m.saved, 0);
+  return { months: list, income: inc, saved, average: inc ? saved / inc : null, monthsWithIncome: withIncome.length };
+}
+
 // ---------- plan vs actual ----------
 
 /** Portfolio value a Monthly row holds for the plan's "Portfolio counted" setting. */
@@ -941,25 +1089,19 @@ export function countedSnapshot(m, mode) {
 }
 
 const MONTH_DAYS = 365.25 / 12;
-const isStart = (note) => /^starting position/i.test(String(note ?? "").trim());
 
 /**
  * New money put in between `from` (exclusive) and `to` (inclusive): deposits
  * minus withdrawals on any account, plus III pillar contributions (fund units
- * bought or sold there). Starting-position rows are left out.
+ * bought or sold there), as `savedBy` counts them.
  */
 export function netInvested(transactions, from, to) {
   let sum = 0;
   for (const t of transactions) {
-    const [date, account, type, , units, price, , cash, note] = t.cells ?? t;
-    const iso = serialToIso(date);
-    if (!iso || iso <= from || iso > to || isStart(note)) continue;
-    if (type === "DEPOSIT") sum += num(cash) ?? 0;
-    else if (type === "WITHDRAWAL") sum -= num(cash) ?? 0;
-    else if (account === PENSION && (type === "BUY" || type === "SELL")) {
-      const v = (num(units) ?? 0) * (num(price) ?? 0);
-      sum += type === "BUY" ? v : -v;
-    }
+    const cells = t.cells ?? t;
+    const iso = serialToIso(cells[0]);
+    const v = savedBy(cells);
+    if (v !== null && iso > from && iso <= to) sum += v;
   }
   return sum;
 }
@@ -968,10 +1110,9 @@ export function netInvested(transactions, from, to) {
 export function investTrackingStart(transactions) {
   let first = null;
   for (const t of transactions) {
-    const [date, account, type, , , , , , note] = t.cells ?? t;
-    const iso = serialToIso(date);
-    const counts = type === "DEPOSIT" || type === "WITHDRAWAL" || (account === PENSION && (type === "BUY" || type === "SELL"));
-    if (iso && counts && !isStart(note) && (!first || iso < first)) first = iso;
+    const cells = t.cells ?? t;
+    const iso = serialToIso(cells[0]);
+    if (savedBy(cells) !== null && (!first || iso < first)) first = iso;
   }
   return first;
 }

@@ -7,6 +7,9 @@ import {
   parseAccounts,
   parseGoals,
   parseHistory,
+  historySeries,
+  livePoint,
+  pointsInRange,
   parseHoldings,
   parseMonthly,
   planSnapshot,
@@ -262,6 +265,8 @@ test("retirementByAge matches the Retirement tab table", () => {
   assert.equal(Math.round(at(53).portfolio), 802999);
   assert.equal(plan.earliestAge, 53);
   assert.equal(plan.byAge.at(-1).age, 84);
+  // Monthly spend in the euros of the retirement year.
+  assert.ok(Math.abs(at(53).spendFuture - at(53).spend * 1.03 ** 10) < 1e-6);
 });
 
 test("sameTransaction compares columns A to I only", async () => {
@@ -376,4 +381,106 @@ test("changedInputs lists only the inputs that differ from the saved plan", asyn
   assert.deepEqual(changedInputs(saved, { ...saved }), []);
   assert.deepEqual(changedInputs(saved, { ...saved, returnPre: 3.5 / 100 }), []);
   assert.deepEqual(changedInputs(saved, { ...saved, retireAge: 52, counted: "Total" }), ["retireAge", "counted"]);
+});
+
+const hist = (rows) => parseHistory([["Date", "Account", "Value (EUR)", "Note"], ...rows]);
+
+test("historySeries sums each History date by asset class", () => {
+  const accounts = parseAccounts(ACCOUNTS);
+  const series = historySeries(
+    hist([
+      ["2026-09-05", "IBKR", 100],
+      ["2026-09-05", "III pillar", 50],
+      ["2026-09-05", "II pillar", 20],
+      ["2026-10-05", "IBKR", 110],
+      ["2026-10-05", "III pillar", 55],
+      ["2026-10-05", "Vinted options", 30],
+      ["2026-10-05", "Gone account", 5],
+    ]),
+    accounts,
+  );
+  assert.deepEqual(series, [
+    { date: "2026-09-05", total: 170, parts: { Stocks: 100, Pension: 70 } },
+    { date: "2026-10-05", total: 200, parts: { Stocks: 110, Pension: 55, Options: 30, Other: 5 } },
+  ]);
+});
+
+test("historySeries fills a one-account date from the last full snapshot", () => {
+  const accounts = parseAccounts(ACCOUNTS);
+  const series = historySeries(
+    hist([
+      ["2026-10-05", "IBKR", 100],
+      ["2026-10-05", "III pillar", 50],
+      ["2026-10-05", "Vinted options", 30],
+      ["2026-10-20", "Vinted options", 40],
+      ["2026-11-01", "IBKR", 120],
+      ["2026-11-01", "III pillar", 60],
+    ]),
+    accounts,
+  );
+  assert.equal(series[1].total, 190);
+  assert.deepEqual(series[1].parts, { Stocks: 100, Pension: 50, Options: 40 });
+  // Two of three accounts is a full snapshot: Vinted options isn't carried.
+  assert.equal(series[2].total, 180);
+});
+
+test("livePoint splits active accounts by class", () => {
+  const p = livePoint(parseAccounts(ACCOUNTS), "2026-11-04");
+  assert.equal(p.total, 36944 + 13039 + 58303);
+  assert.deepEqual(p.parts, { Stocks: 36944, Pension: 13039, Options: 58303 });
+});
+
+test("pointsInRange cuts to the range, keeping at least two points", () => {
+  const pts = ["2025-10-05", "2026-09-05", "2026-10-05", "2026-11-04"].map((date) => ({ date }));
+  assert.deepEqual(pointsInRange(pts, "1m").map((p) => p.date), ["2026-10-05", "2026-11-04"]);
+  assert.deepEqual(pointsInRange(pts, "1y").map((p) => p.date), ["2026-09-05", "2026-10-05", "2026-11-04"]);
+  assert.deepEqual(pointsInRange(pts.slice(0, 3), "1m").map((p) => p.date), ["2026-09-05", "2026-10-05"]);
+  assert.equal(pointsInRange(pts, "all").length, 4);
+  const daily = ["2026-10-03", "2026-10-04", "2026-10-05", "2026-11-04"].map((date) => ({ date }));
+  assert.deepEqual(pointsInRange(daily, "1m").map((p) => p.date), ["2026-10-04", "2026-10-05", "2026-11-04"]);
+});
+
+import { incomeRow, parseIncome, savedBy, savingsByMonth } from "../app/js/model.js";
+
+test("savedBy counts deposits, withdrawals and III pillar buys, not IBKR trades or starting positions", () => {
+  assert.equal(savedBy(["2026-11-04", "Rent cash", "DEPOSIT", "", "", "", "", 650, ""]), 650);
+  assert.equal(savedBy(["2026-11-04", "Cash", "WITHDRAWAL", "", "", "", "", 200, ""]), -200);
+  assert.equal(savedBy(["2026-11-04", "III pillar", "BUY", "ARTEA", 100, 0.7, "", "", ""]), 70);
+  assert.equal(savedBy(["2026-11-04", "IBKR", "BUY", "VWCE.DE", 1, 110, "", "", ""]), null);
+  assert.equal(savedBy(["2026-11-04", "Vinted options", "BUY", "VINTED", 10, "", "", "", ""]), null);
+  assert.equal(savedBy(["2026-06-30", "III pillar", "BUY", "ARTEA", 100, 0.7, "", "", "Starting position at…"]), null);
+  assert.equal(savedBy(["", "IBKR", "DEPOSIT", "CASH", "", "", "", 100, ""]), null);
+});
+
+test("parseIncome and incomeRow", () => {
+  const grid = [["Date", "Source", "Amount (EUR)", "Note"], [46330, "Salary", 4000, ""], ["", "", "", ""], ["2026-11-20", "Bonus", "€1,000", "Q3"]];
+  const inc = parseIncome(grid);
+  assert.equal(inc.length, 2);
+  assert.equal(inc[0].date, "2026-11-04");
+  assert.equal(inc[1].amount, 1000);
+  assert.deepEqual(incomeRow({ date: "2026-11-04", source: "Salary", amount: "4000,5" }).row, ["2026-11-04", "Salary", 4000.5, ""]);
+  assert.equal(incomeRow({ date: "2026-11-04", amount: "0" }).row, undefined);
+});
+
+test("savingsByMonth gives the rate per month and the average over months with income", () => {
+  const tx = [
+    { cells: ["2026-10-02", "Cash", "DEPOSIT", "", "", "", "", 1000, ""] },
+    { cells: ["2026-11-03", "IBKR", "DEPOSIT", "CASH", "", "", "", 1500, ""] },
+    { cells: ["2026-11-03", "IBKR", "BUY", "VWCE.DE", 10, 110, "", "", ""] },
+    { cells: ["2026-11-04", "Cash", "WITHDRAWAL", "", "", "", "", 500, ""] },
+    { cells: ["2025-01-04", "Cash", "DEPOSIT", "", "", "", "", 999, ""] },
+  ];
+  const income = [
+    { date: "2026-10-25", amount: 4000 },
+    { date: "2026-11-25", amount: 3000 },
+    { date: "2026-11-28", amount: 1000 },
+  ];
+  const s = savingsByMonth(tx, income, "2026-11-04", 3);
+  assert.deepEqual(s.months.map((m) => m.month), ["2026-09", "2026-10", "2026-11"]);
+  assert.equal(s.months[0].rate, null);
+  assert.equal(s.months[1].rate, 0.25);
+  assert.equal(s.months[2].saved, 1000);
+  assert.equal(s.months[2].rate, 0.25);
+  assert.equal(s.average, 2000 / 8000);
+  assert.equal(s.monthsWithIncome, 2);
 });
