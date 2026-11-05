@@ -90,7 +90,7 @@ test("currentMix counts IBKR cash as cash, options and III pillar as stocks", ()
   assert.equal(mix.stocks.find((s) => s.key === "VINTED").fixed, true);
   const artea = mix.stocks.find((s) => s.key === "ARTEA-AA16");
   assert.equal(artea.fixed, false);
-  assert.equal(artea.label, "III pillar pension");
+  assert.equal(artea.label, "Artea"); // each III pillar fund is listed by its own name
 });
 
 test("buyOnly never buys a fixed item, fullRebalance only sells one", () => {
