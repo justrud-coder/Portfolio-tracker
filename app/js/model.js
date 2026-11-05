@@ -549,7 +549,7 @@ export function transactionRow(t) {
     const fund = String(t.fund ?? "").trim();
     if (!fund) errors.push("Pick a fund, or enter the new fund's name.");
     if (!(units > 0)) errors.push("Units must be more than 0.");
-    if (!(cash > 0)) errors.push("Amount paid must be more than 0.");
+    if (!(cash > 0)) errors.push("Total value must be more than 0.");
     const unitPrice = units > 0 && cash > 0 ? Math.round((cash / units) * 1e6) / 1e6 : "";
     row = [t.date, PENSION, "BUY", fund, units, unitPrice, "", "", note];
   } else if (type === "OPTIONS") {

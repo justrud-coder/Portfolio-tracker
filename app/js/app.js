@@ -1037,8 +1037,7 @@ function renderAdd(root) {
         </div>
         <div class="two" data-for="newfund">
           <label class="field">Fund name<input name="fundName" autocomplete="off" placeholder="e.g. Artea Ambicingas Active 16+"></label>
-          <label class="field">Units<input name="pensionUnits" inputmode="decimal" autocomplete="off"></label>
-          <label class="field">Amount paid (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
+          <label class="field">Total value (€)<input name="pensionCash" inputmode="decimal" autocomplete="off"></label>
         </div>
         <div class="two" data-for="total">
           <label class="field">New total value (€)<input name="totalValue" inputmode="decimal" autocomplete="off"></label>
@@ -1175,9 +1174,8 @@ function renderAdd(root) {
         }`;
       }
     } else if (mode === "PENSION_NEW") {
-      const units = num(f.get("pensionUnits"));
-      const cash = num(f.get("pensionCash"));
-      if (units && cash) msg = `Unit price ${unit(cash / units)}. It becomes the fund's latest price.`;
+      const total = decimal(f.get("pensionCash"));
+      if (total > 0) msg = `Adds the fund at ${eurCents(total)}. Later, update it under Current funds with its new total value.`;
     } else if (cls === "estate") {
       const acct = properties.find((a) => a.name === f.get("property"));
       const amount = decimal(f.get("change"));
@@ -1200,7 +1198,9 @@ function renderAdd(root) {
     if (cls === "estate") return saveRealEstate(f, mode === "ESTATE_UP");
     if (mode === "DEPOSIT" && f.cashMode === "total") return saveNewTotal(f);
     const pension = mode === "PENSION_NEW";
-    const input = pension ? { ...f, type: "PENSION", fund: f.fundName, units: f.pensionUnits, cash: f.pensionCash } : { ...f, type: mode };
+    // A new fund is kept as 1 unit priced at its total value, so a later
+    // new total under Current funds simply becomes its price.
+    const input = pension ? { ...f, type: "PENSION", fund: f.fundName, units: 1, cash: decimal(f.pensionCash) } : { ...f, type: mode };
     const { row, errors } = transactionRow(input);
     if (pension && !String(f.fundName ?? "").trim()) errors.unshift("Enter the fund's name.");
     $("#txErrors").innerHTML = errors.map((x) => `<li>${esc(x)}</li>`).join("");
@@ -1212,7 +1212,7 @@ function renderAdd(root) {
       let what;
       if (pension) {
         const fund = await savePension(row, String(f.fundName).trim());
-        what = `${num(row[4])} units of ${esc(fund.name)}`;
+        what = `${esc(fund.name)} at ${eurCents(row[5])}`;
         // Next time, open on the fund just made.
         ls.set("pt.lastTx", JSON.stringify({ mode: "PENSION_VALUE", fund: fund.symbol }));
       } else {
