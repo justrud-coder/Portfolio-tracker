@@ -20,6 +20,8 @@ const SECTIONS = [
   ["target mix", "target", PALETTE.orange],
   ["what changed", "plus", PALETTE.coral],
   ["recent", "clock", PALETTE.violet],
+  ["by category", "pie", PALETTE.violet],
+  ["month by month", "calendar", PALETTE.teal],
 ];
 const GROUP_ICONS = { stocks: "trend", cash: "wallet", "real estate": "home", options: "star", "iii pillar pension": "umbrella" };
 const KIND_COLORS = { buy: PALETTE.green, sell: PALETTE.coral, deposit: PALETTE.teal, withdrawal: PALETTE.orange, pension: PALETTE.amber, options: PALETTE.violet };

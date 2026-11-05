@@ -616,3 +616,31 @@ h2[data-icon="dot"]::before { background-image: url("data:image/svg+xml,%3Csvg x
 .row[data-initial]::before { width: 30px; height: 30px; font-size: 13px; }
 .row[data-initial] { gap: 10px; }
 .row[data-initial] > .right { flex: 0 1 auto; max-width: 48%; }
+
+/* ---------- details: month over month ---------- */
+.month-step { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.month-step .label { font-weight: 700; color: var(--text); font-size: 17px; text-align: center; }
+.month-step .icon-btn:disabled { opacity: 0.3; cursor: default; }
+.month-hero { text-align: center; background: radial-gradient(120% 140% at 100% 0%, var(--accent-wash) 0%, transparent 60%), var(--surface); }
+.month-hero:has(> .value.up) { background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--up) 16%, transparent) 0%, transparent 60%), var(--surface); }
+.month-hero:has(> .value.down) { background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--down) 14%, transparent) 0%, transparent 60%), var(--surface); }
+.month-hero .value { font: 800 40px/1.1 var(--font-display); letter-spacing: -1px; margin: 14px 0 6px; font-variant-numeric: tabular-nums; }
+.month-hero .sub { font-size: 15px; margin-top: 4px; }
+.month-hero .sub.small { font-size: 13px; }
+.acct-list { list-style: none; margin: 0 0 12px 50px; padding: 0; }
+.acct-list > .row { min-height: 0; padding: 10px 0; border-top: 1px solid var(--sep); font-size: 15px; }
+.acct-list > .row .meta { font-size: 13px; }
+.note { margin: 12px 0 0; line-height: 1.45; }
+.chips { margin: -4px 0 8px; }
+.chips button { padding: 5px 12px; }
+button.pick-month { width: 100%; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.pick-month > div:first-child { flex: 1; min-width: 0; }
+button.pick-month.on .name { color: var(--accent); }
+button.pick-month:active { opacity: 0.6; }
+.dbar { position: relative; height: 6px; margin-top: 8px; border-radius: 3px; background: var(--bar-track); }
+.dbar::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--border-strong); }
+.dbar span { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.dbar .pos { left: 50%; background: var(--up); }
+.dbar .neg { right: 50%; background: var(--down); }
+.btn.small.more { display: block; margin: 14px auto 0; }
+.privacy .dbar { filter: blur(6px); }

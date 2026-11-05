@@ -229,6 +229,24 @@ export const seriesName = (assetClass) => assetClass || "Other";
  */
 export function historySeries(history, accounts) {
   const classOf = new Map(accounts.map((a) => [a.name, a.assetClass]));
+  return accountSnapshots(history).map(({ date, values }) => {
+    const parts = {};
+    let total = 0;
+    for (const [account, value] of values) {
+      const name = seriesName(classOf.get(account));
+      parts[name] = (parts[name] ?? 0) + value;
+      total += value;
+    }
+    return { date, total, parts };
+  });
+}
+
+/**
+ * Every account's value on each History date, [{date, values: Map}], oldest
+ * first, with the same rule as `historySeries`: a date with fewer than half
+ * the accounts of the last full snapshot keeps the others from that one.
+ */
+export function accountSnapshots(history) {
   const byDate = new Map();
   for (const h of history) {
     if (!h.date || !h.account) continue;
@@ -242,14 +260,7 @@ export function historySeries(history, accounts) {
     let values = rows;
     if (full && rows.size < full.size / 2) values = new Map([...full, ...rows]);
     else full = rows;
-    const parts = {};
-    let total = 0;
-    for (const [account, value] of values) {
-      const name = seriesName(classOf.get(account));
-      parts[name] = (parts[name] ?? 0) + value;
-      total += value;
-    }
-    out.push({ date, total, parts });
+    out.push({ date, values });
   }
   return out;
 }
@@ -1154,7 +1165,7 @@ export function planGrowth(p, start, months) {
 }
 
 /** Last point of each calendar month, oldest first. */
-function monthEnds(points) {
+export function monthEnds(points) {
   const out = [];
   for (const pt of points) {
     const last = out[out.length - 1];
@@ -1283,4 +1294,78 @@ export function unitsToTarget(current, target) {
 /** A property's value after an increase or decrease of `amount`, rounded to cents. */
 export function changedValue(current, amount, up) {
   return Math.round(((current ?? 0) + (up ? amount : -amount)) * 100) / 100;
+}
+
+// ---------- details: month over month ----------
+
+/** Details tab categories, in display order. */
+export const DETAIL_GROUPS = ["Stocks", "Cash", "III pillar", "Options", "Real estate", "II pillar", "Crypto"];
+
+/** Details category of an account: III pillar funds by class, II pillar on its own. */
+export function detailGroup(name, assetClass) {
+  if (norm(name) === "ii pillar") return "II pillar";
+  if (assetClass === PENSION_CLASS) return "III pillar";
+  return assetClass || "Other";
+}
+
+/**
+ * Month-over-month change of every category and account, newest month first.
+ * A month runs from the previous month's last History snapshot to this
+ * month's last one (for the current month, today's live values from the
+ * Accounts tab), like the Goals tab's Growth vs plan by month. A month with
+ * no snapshot is folded into the next one.
+ *
+ * Each month: {period: "YYYY-MM", from, to, live, start, end, change, pct,
+ * groups: [{name, start, end, change, pct, accounts: [{name, start, end, change, pct}]}]}.
+ * Categories and accounts that are 0 at both ends are left out.
+ */
+export function monthlyDetails(history, accounts, today = null) {
+  const classOf = new Map(accounts.map((a) => [a.name, a.assetClass]));
+  // Today's snapshot, if any, gives way to the live values, as on the Overview.
+  const points = accountSnapshots(history)
+    .filter((p) => !today || p.date < today)
+    .map((p) => ({ ...p, live: false }));
+  if (today) {
+    const values = new Map(accounts.filter((a) => a.active).map((a) => [a.name, a.value]));
+    points.push({ date: today, values, live: true });
+  }
+  const change = (start, end) => ({ start, end, change: end - start, pct: start ? (end - start) / Math.abs(start) : null });
+  const rank = (g) => (DETAIL_GROUPS.includes(g) ? DETAIL_GROUPS.indexOf(g) : DETAIL_GROUPS.length);
+  const ends = monthEnds(points);
+  const out = [];
+  for (let k = ends.length - 1; k >= 1; k--) {
+    const a = ends[k - 1];
+    const b = ends[k];
+    const groups = new Map();
+    for (const name of new Set([...a.values.keys(), ...b.values.keys()])) {
+      const start = a.values.get(name) ?? 0;
+      const end = b.values.get(name) ?? 0;
+      if (!start && !end) continue;
+      const g = detailGroup(name, classOf.get(name));
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push({ name, ...change(start, end) });
+    }
+    const list = [...groups.entries()]
+      .map(([name, accs]) => ({
+        name,
+        ...change(
+          accs.reduce((s, x) => s + x.start, 0),
+          accs.reduce((s, x) => s + x.end, 0),
+        ),
+        accounts: accs.sort((x, y) => Math.abs(y.change) - Math.abs(x.change) || y.end - x.end),
+      }))
+      .sort((x, y) => rank(x.name) - rank(y.name) || x.name.localeCompare(y.name));
+    out.push({
+      period: b.date.slice(0, 7),
+      from: a.date,
+      to: b.date,
+      live: b.live,
+      ...change(
+        list.reduce((s, x) => s + x.start, 0),
+        list.reduce((s, x) => s + x.end, 0),
+      ),
+      groups: list,
+    });
+  }
+  return out;
 }
