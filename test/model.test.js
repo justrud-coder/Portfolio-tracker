@@ -440,10 +440,11 @@ test("pointsInRange cuts to the range, keeping at least two points", () => {
   assert.deepEqual(pointsInRange(daily, "1m").map((p) => p.date), ["2026-10-04", "2026-10-05", "2026-11-04"]);
 });
 
-import { incomeRow, parseIncome, savedBy, savingsByMonth } from "../app/js/model.js";
+import { incomeRow, incomeSources, parseIncome, savedBy, savingsByMonth } from "../app/js/model.js";
 
 test("savedBy counts deposits, withdrawals and III pillar buys, not IBKR trades or starting positions", () => {
-  assert.equal(savedBy(["2026-11-04", "Rent cash", "DEPOSIT", "", "", "", "", 650, ""]), 650);
+  assert.equal(savedBy(["2026-11-04", "Cash", "DEPOSIT", "", "", "", "", 650, ""]), 650);
+  assert.equal(savedBy(["2026-11-04", "Rent cash", "DEPOSIT", "", "", "", "", 650, ""]), null);
   assert.equal(savedBy(["2026-11-04", "Cash", "WITHDRAWAL", "", "", "", "", 200, ""]), -200);
   assert.equal(savedBy(["2026-11-04", "III pillar", "BUY", "ARTEA", 100, 0.7, "", "", ""]), 70);
   assert.equal(savedBy(["2026-11-04", "IBKR", "BUY", "VWCE.DE", 1, 110, "", "", ""]), null);
@@ -459,7 +460,11 @@ test("parseIncome and incomeRow", () => {
   assert.equal(inc[0].date, "2026-11-04");
   assert.equal(inc[1].amount, 1000);
   assert.deepEqual(incomeRow({ date: "2026-11-04", source: "Salary", amount: "4000,5" }).row, ["2026-11-04", "Salary", 4000.5, ""]);
-  assert.equal(incomeRow({ date: "2026-11-04", amount: "0" }).row, undefined);
+  assert.equal(incomeRow({ date: "2026-11-04", source: "Salary", amount: "0" }).row, undefined);
+  assert.equal(incomeRow({ date: "2026-11-04", source: "", amount: "10" }).row, undefined);
+  assert.equal(incomeRow({ date: "2026-11-04", source: "rent", amount: "10" }).row, undefined);
+  assert.deepEqual(incomeRow({ date: "2026-11-04", source: "Freelance", amount: "10" }).row, ["2026-11-04", "Freelance", 10, ""]);
+  assert.deepEqual(incomeSources([{ source: "Freelance" }, { source: "salary" }, { source: "Rent" }]), ["Salary", "Options", "Other", "Freelance"]);
 });
 
 test("savingsByMonth gives the rate per month and the average over months with income", () => {
@@ -474,6 +479,7 @@ test("savingsByMonth gives the rate per month and the average over months with i
     { date: "2026-10-25", amount: 4000 },
     { date: "2026-11-25", amount: 3000 },
     { date: "2026-11-28", amount: 1000 },
+    { date: "2026-11-28", source: "Rent", amount: 650 },
   ];
   const s = savingsByMonth(tx, income, "2026-11-04", 3);
   assert.deepEqual(s.months.map((m) => m.month), ["2026-09", "2026-10", "2026-11"]);

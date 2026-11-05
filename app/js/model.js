@@ -1003,7 +1003,20 @@ export function rebalancePlan(mix, targets, deposit, { sell = false } = {}) {
 
 /** Income tab: Date | Source | Amount (EUR) | Note. */
 export const INCOME_HEADER = ["Date", "Source", "Amount (EUR)", "Note"];
-export const INCOME_SOURCES = ["Salary", "Bonus", "Rent", "Other"];
+export const INCOME_SOURCES = ["Salary", "Options", "Other"];
+/** Rent isn't counted: not as income, and the Rent cash account's deposits aren't savings. */
+export const RENT_ACCOUNT = "Rent cash";
+const isRent = (s) => norm(s) === "rent";
+
+/** Sources to offer: the standard ones, then any others already on the Income tab. */
+export function incomeSources(income = []) {
+  const out = [...INCOME_SOURCES];
+  for (const i of income) {
+    const src = String(i.source ?? "").trim();
+    if (src && !isRent(src) && !out.some((x) => norm(x) === norm(src))) out.push(src);
+  }
+  return out;
+}
 
 /** Income tab rows with a date and an amount, with their 1-based sheet row. */
 export function parseIncome(grid) {
@@ -1025,7 +1038,9 @@ export function incomeRow(t) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t.date ?? "")) errors.push("Pick a date.");
   const amount = num(String(t.amount ?? "").replace(",", "."));
   if (!(amount > 0)) errors.push("Amount must be more than 0.");
-  const source = String(t.source ?? "").trim() || "Salary";
+  const source = String(t.source ?? "").trim();
+  if (!source) errors.push("Enter the new source's name.");
+  else if (isRent(source)) errors.push("Rent isn't counted as income for the savings rate.");
   if (errors.length) return { errors };
   return { errors, row: [t.date, source, amount, String(t.note ?? "").trim()] };
 }
@@ -1041,6 +1056,7 @@ export function incomeRow(t) {
 export function savedBy(cells) {
   const [date, account, type, , units, price, fees, cash, note] = cells ?? [];
   if (!serialToIso(date) || /^starting position/i.test(String(note ?? "").trim())) return null;
+  if (norm(account) === norm(RENT_ACCOUNT)) return null;
   if (type === "DEPOSIT") return num(cash) ?? 0;
   if (type === "WITHDRAWAL") return -(num(cash) ?? 0);
   if (account === PENSION && (type === "BUY" || type === "SELL")) {
@@ -1060,7 +1076,7 @@ export function savingsByMonth(transactions, income, today, count = 12) {
   const months = [];
   for (let i = count - 1; i >= 0; i--) months.push(addMonths(`${end}-01`, -i).slice(0, 7));
   const by = new Map(months.map((m) => [m, { month: m, income: 0, saved: 0, rate: null }]));
-  for (const i of income) by.get(i.date.slice(0, 7)) && (by.get(i.date.slice(0, 7)).income += i.amount);
+  for (const i of income) if (!isRent(i.source) && by.get(i.date.slice(0, 7))) by.get(i.date.slice(0, 7)).income += i.amount;
   for (const t of transactions) {
     const cells = t.cells ?? t;
     const v = savedBy(cells);
