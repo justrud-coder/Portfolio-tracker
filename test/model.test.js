@@ -497,7 +497,9 @@ test("transaction picker: class and action", async () => {
   assert.deepEqual(m.txStart({}), { cls: "stocks", mode: "BUY" });
   assert.deepEqual(m.txStart({ type: "WITHDRAWAL" }), { cls: "cash", mode: "WITHDRAWAL" });
   assert.deepEqual(m.txStart({ type: "PENSION" }), { cls: "pension", mode: "PENSION_VALUE" });
-  assert.deepEqual(m.txStart({ mode: "PENSION_NEW" }), { cls: "pension", mode: "PENSION_VALUE" });
+  assert.deepEqual(m.txStart({ mode: "PENSION_NEW" }), { cls: "pension", mode: "PENSION_NEW" });
+  assert.equal(m.nextAccountRow([["Account"], ["IBKR"], ["Cash"], ["", "", "", "", false]]), 4);
+  assert.equal(m.nextAccountRow([["Account"], ["IBKR"]]), 3);
   assert.deepEqual(m.txStart({ type: "REAL_ESTATE" }), { cls: "estate", mode: "ESTATE_UP" });
   assert.deepEqual(m.txStart({ mode: "ESTATE_DOWN" }), { cls: "estate", mode: "ESTATE_DOWN" });
   assert.deepEqual(m.txStart({ type: "NOPE" }), { cls: "stocks", mode: "BUY" });

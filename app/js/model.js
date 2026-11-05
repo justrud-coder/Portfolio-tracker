@@ -451,7 +451,8 @@ export function repeatForm(cells, today) {
   const base = { date: today, note: String(note ?? "") };
   // III pillar and options are now set by their total value, so there's nothing to repeat.
   if (account === PENSION || account === OPTIONS) return null;
-  if (type === "BUY" || type === "SELL") return { ...base, type, symbol, units: num(units) ?? "", price: num(price) ?? "" };
+  // Only IBKR trades are repeatable; older III pillar or options buys aren't.
+  if ((type === "BUY" || type === "SELL") && account === BROKER) return { ...base, type, symbol, units: num(units) ?? "", price: num(price) ?? "" };
   if (type === "DEPOSIT" || type === "WITHDRAWAL") return { ...base, type, account, cash: num(cash) ?? "" };
   return null;
 }
@@ -511,6 +512,8 @@ export const BROKER = "IBKR";
 export const BROKER_CASH = "CASH";
 /** III pillar pension account, kept as one total value. */
 export const PENSION = "III pillar";
+/** Asset class of the III pillar funds: each fund is its own account. */
+export const PENSION_CLASS = "Pension";
 /** Vinted share options account, kept as one total value. */
 export const OPTIONS = "Vinted options";
 
@@ -827,7 +830,7 @@ export const TARGET_CLASSES = ["Real estate", "Stocks", "Cash"];
 export const STOCK_LIKE_FIXED = { Options: true, Pension: false };
 export const STOCK_LIKE = Object.keys(STOCK_LIKE_FIXED);
 /** Target keys for Vinted options and III pillar, now kept as one total value each (as their symbols were). */
-const STOCK_LIKE_KEYS = { "Vinted options": "VINTED", "III pillar": "ARTEA-AA16" };
+const STOCK_LIKE_KEYS = { "Vinted options": "VINTED", "III pillar": "ARTEA-AA16", "Artea Ambicingas Active 16+": "ARTEA-AA16" };
 
 /**
  * Starting mix until targets are saved to the sheet. Options and III pillar
@@ -904,7 +907,7 @@ export function currentMix(accounts, holdings) {
       const items = a.valuation === "holdings" && own.length ? own.map((h) => ({ key: h.symbol, name: h.name || h.symbol, value: h.value || 0 })) : [{ key: STOCK_LIKE_KEYS[a.name] ?? a.name.toUpperCase(), name: a.name, value: a.value }];
       for (const i of items) {
         add("Stocks", i.value);
-        stocks.push({ ...i, price: null, fixed: STOCK_LIKE_FIXED[a.assetClass], label: GROUP_NAMES[a.assetClass] ?? i.name });
+        stocks.push({ ...i, price: null, fixed: STOCK_LIKE_FIXED[a.assetClass], label: a.assetClass === PENSION_CLASS ? i.name : GROUP_NAMES[a.assetClass] ?? i.name });
       }
     } else {
       add(a.assetClass, a.value);
@@ -1271,18 +1274,23 @@ export function planVsActual(p, monthly, transactions = [], { live = null, today
 export const TX_CLASSES = [
   { id: "stocks", label: "Stocks", actions: [["BUY", "Buy"], ["SELL", "Sell"]] },
   { id: "cash", label: "Cash", actions: [["DEPOSIT", "Add"], ["WITHDRAWAL", "Remove"]] },
-  { id: "pension", label: "III pillar", actions: [["PENSION_VALUE", "New total value"]] },
+  { id: "pension", label: "III pillar", actions: [["PENSION_VALUE", "Update a fund"], ["PENSION_NEW", "Add new fund"]] },
   { id: "options", label: "Options", actions: [["OPTIONS_VALUE", "New total value"]] },
   { id: "estate", label: "Real estate", actions: [["ESTATE_UP", "Increase"], ["ESTATE_DOWN", "Decrease"]] },
 ];
 
 /** Class and mode to open the form on, from what was saved last (older saves used a single type). */
 export function txStart(last = {}) {
-  const legacy = { PENSION: "PENSION_VALUE", PENSION_NEW: "PENSION_VALUE", OPTIONS: "OPTIONS_VALUE", REAL_ESTATE: "ESTATE_UP" };
-  if (legacy[last.mode]) last = { ...last, mode: legacy[last.mode] };
+  const legacy = { PENSION: "PENSION_VALUE", OPTIONS: "OPTIONS_VALUE", REAL_ESTATE: "ESTATE_UP" };
   const mode = legacy[last.type] ?? last.mode ?? last.type;
   for (const c of TX_CLASSES) if (c.actions.some(([m]) => m === mode)) return { cls: c.id, mode };
   return { cls: "stocks", mode: "BUY" };
+}
+
+/** First Accounts row (1-based) with no account name, after the header. */
+export function nextAccountRow(grid) {
+  for (let i = 1; i < grid.length; i++) if (!String(grid[i]?.[0] ?? "").trim()) return i + 1;
+  return Math.max(grid.length, 1) + 1;
 }
 
 /**
